@@ -10,7 +10,8 @@ class Role(models.Model):
     name = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
     permissions = models.JSONField(default=list, blank=True)  # Stores permission codes
-    
+    can_self_register = models.BooleanField(default=False)  # ✅ New field to support logic
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
