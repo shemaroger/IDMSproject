@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from .models import Role
+from IDMSapp.models import Role
 
 class Command(BaseCommand):
     help = 'Create default roles for the application'
@@ -38,9 +38,9 @@ class Command(BaseCommand):
                 }
             )
             if created:
-                self.stdout.write(self.style.SUCCESS(f'✅ Created role: {role.name}'))
+                self.stdout.write(self.style.SUCCESS(f' Created role: {role.name}'))
             else:
-                self.stdout.write(self.style.WARNING(f'ℹ️ Role already exists: {role.name}'))
+                self.stdout.write(self.style.WARNING(f'ℹ Role already exists: {role.name}'))
 
         self.stdout.write(self.style.SUCCESS('\n🎉 Successfully set up all roles!'))
 
@@ -54,6 +54,6 @@ class Command(BaseCommand):
         # Self-registration overview
         self.stdout.write(self.style.SUCCESS('\n--- Self-Registration ---'))
         for role in Role.objects.order_by('name'):
-            status = '✅ Enabled' if role.can_self_register else '🚫 Disabled'
+            status = ' Enabled' if role.can_self_register else ' Disabled'
             self.stdout.write(f'{role.name}: {status}')
-        self.stdout.write(self.style.SUCCESS('\n🎉 Role setup complete!'))
+        self.stdout.write(self.style.SUCCESS('\n Role setup complete!'))
