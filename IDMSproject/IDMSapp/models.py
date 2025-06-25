@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
 
 class Role(models.Model):
     """
@@ -363,3 +364,209 @@ class MedicalRecord(models.Model):
 
     class Meta:
         ordering = ['-date']    
+class CronJobLog(models.Model):
+    """
+    Tracks execution of scheduled background jobs for system monitoring
+    """
+    
+    JOB_STATUS_CHOICES = [
+        ('S', 'Started'),
+        ('C', 'Completed'),
+        ('F', 'Failed'),
+        ('T', 'Timeout'),
+    ]
+    
+    JOB_TYPE_CHOICES = [
+        ('DISEASE_ALERT', 'Disease Surveillance Alert'),
+        ('SYMPTOM_ANALYSIS', 'Symptom Pattern Analysis'),
+        ('EMERGENCY_CLEANUP', 'Emergency Request Cleanup'),
+        ('APPOINTMENT_REMINDER', 'Appointment Reminders'),
+        ('PREVENTION_CAMPAIGN', 'Prevention Campaign Updates'),
+        ('DATA_BACKUP', 'Database Backup'),
+        ('HEALTH_CHECK', 'System Health Check'),
+        ('USER_CLEANUP', 'Inactive User Cleanup'),
+        ('NOTIFICATION_QUEUE', 'Notification Queue Processing'),
+        ('ANALYTICS_REPORT', 'Analytics Report Generation'),
+    ]
+    
+    # Core job identification
+    job_name = models.CharField(
+        max_length=100,
+        help_text="Name of the scheduled job"
+    )
+    job_type = models.CharField(
+        max_length=20,
+        choices=JOB_TYPE_CHOICES,
+        help_text="Category of the scheduled job"
+    )
+    
+    # Execution tracking
+    timestamp = models.DateTimeField(
+        default=timezone.now,
+        help_text="When the job started executing"
+    )
+    completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the job finished (success or failure)"
+    )
+    
+    # Status and results
+    status = models.CharField(
+        max_length=1,
+        choices=JOB_STATUS_CHOICES,
+        default='S',
+        help_text="Current status of the job"
+    )
+    
+    # Performance metrics
+    duration_seconds = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        help_text="How long the job took to complete"
+    )
+    
+    records_processed = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of records/items processed"
+    )
+    
+    # Error handling
+    error_message = models.TextField(
+        blank=True,
+        help_text="Error details if job failed"
+    )
+    
+    # Additional context
+    parameters = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Job parameters and configuration"
+    )
+    
+    result_summary = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Summary of job execution results"
+    )
+    
+    # System context
+    server_hostname = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Server that executed the job"
+    )
+    
+    memory_usage_mb = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Peak memory usage during execution"
+    )
+    
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['job_type', '-timestamp']),
+            models.Index(fields=['status', '-timestamp']),
+            models.Index(fields=['-timestamp']),
+        ]
+        
+    def __str__(self):
+        return f"{self.job_name} - {self.get_status_display()} at {self.timestamp}"
+    
+    @classmethod
+    def last(cls):
+        """
+        Get the most recent cron job log entry
+        Used by health check system
+        """
+        return cls.objects.first()
+    
+    @classmethod
+    def get_recent_failures(cls, hours=24):
+        """
+        Get failed jobs in the last N hours
+        """
+        cutoff = timezone.now() - timezone.timedelta(hours=hours)
+        return cls.objects.filter(
+            timestamp__gte=cutoff,
+            status='F'
+        )
+    
+    @classmethod
+    def get_job_stats(cls, job_type, days=7):
+        """
+        Get performance statistics for a specific job type
+        """
+        cutoff = timezone.now() - timezone.timedelta(days=days)
+        jobs = cls.objects.filter(
+            job_type=job_type,
+            timestamp__gte=cutoff,
+            status='C'  # Only completed jobs
+        ).exclude(duration_seconds__isnull=True)
+        
+        if not jobs.exists():
+            return None
+            
+        durations = [job.duration_seconds for job in jobs]
+        return {
+            'count': len(durations),
+            'avg_duration': sum(durations) / len(durations),
+            'min_duration': min(durations),
+            'max_duration': max(durations),
+            'success_rate': jobs.count() / cls.objects.filter(
+                job_type=job_type,
+                timestamp__gte=cutoff
+            ).count() * 100
+        }
+    
+    def mark_completed(self, records_processed=0, result_summary=None):
+        """
+        Mark job as successfully completed
+        """
+        from django.utils import timezone
+        
+        self.completed_at = timezone.now()
+        self.status = 'C'
+        self.records_processed = records_processed
+        
+        if self.timestamp and self.completed_at:
+            self.duration_seconds = (self.completed_at - self.timestamp).total_seconds()
+        
+        if result_summary:
+            self.result_summary = result_summary
+            
+        self.save()
+    
+    def mark_failed(self, error_message):
+        """
+        Mark job as failed with error details
+        """
+        from django.utils import timezone
+        
+        self.completed_at = timezone.now()
+        self.status = 'F'
+        self.error_message = error_message
+        
+        if self.timestamp and self.completed_at:
+            self.duration_seconds = (self.completed_at - self.timestamp).total_seconds()
+            
+        self.save()
+    
+    def is_running_too_long(self, max_minutes=30):
+        """
+        Check if job has been running longer than expected
+        """
+        if self.status != 'S':
+            return False
+            
+        from django.utils import timezone
+        runtime = timezone.now() - self.timestamp
+        return runtime.total_seconds() > (max_minutes * 60)
+    
+    @property
+    def is_healthy(self):
+        """
+        Determine if this job execution was healthy
+        """        

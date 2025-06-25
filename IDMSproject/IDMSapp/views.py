@@ -11,11 +11,7 @@ from django.utils.html import strip_tags
 from django.conf import settings
 from django.db.models import Q
 from django.contrib.auth import authenticate, login
-from .models import (
-    Role, User, UserProfile, Patient, Appointment, EmergencyAmbulanceRequest,
-    Symptom, Disease, SymptomCheckerSession, ScreeningAlert,
-    HealthcareWorkerAlert, PreventiveTip, MedicalRecord, CronJobLog
-)
+from .models import *
 from .serializers import *
 
 # ======================== PERMISSION CLASSES ========================

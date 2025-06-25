@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'django.contrib.gis',  # For geographical features (optional for mapping)
+    # 'django.contrib.gis',  # For geographical features (optional for mapping)
     
     # Third-party Packages
     'rest_framework',  # For REST API
@@ -78,24 +78,36 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'IDMSproject.wsgi.application'
 REST_FRAMEWORK = {
+    # Authentication methods: Token and session-based
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
+
+    # Global permission policy: only authenticated users can access by default
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+
+    # Enable filtering using django-filter (make sure it's installed)
     'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend'
+        'django_filters.rest_framework.DjangoFilterBackend',
+
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
     ],
+
+    # Pagination setup
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20
+    'PAGE_SIZE': 20,
 }
+
 
 # CORS Settings (if using separate frontend)
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React/Vue
     "http://127.0.0.1:8000",
+    "http://localhost:5173",
 ]
 
 # Authentication Backends
