@@ -1,9 +1,5 @@
 from rest_framework import serializers
-from .models import (
-    Role, User, UserProfile, Patient, Appointment, EmergencyAmbulanceRequest,
-    Symptom, Disease, SymptomCheckerSession, ScreeningAlert,
-    HealthcareWorkerAlert, PreventiveTip, MedicalRecord
-)
+from .models import *
 
 # ======================== AUTHENTICATION SERIALIZERS ========================
 class RoleSerializer(serializers.ModelSerializer):
@@ -13,6 +9,8 @@ class RoleSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
 class UserSerializer(serializers.ModelSerializer):
+    role = RoleSerializer(read_only=True)  # 🔴 ADD THIS LINE - shows full role object
+    
     class Meta:
         model = User
         fields = ['id', 'email', 'first_name', 'last_name', 'role', 'is_active', 'date_joined']
@@ -24,18 +22,75 @@ class UserSerializer(serializers.ModelSerializer):
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     
+    # Add these optional fields for patient registration
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
+    blood_group = serializers.CharField(required=False, allow_blank=True)
+    allergies = serializers.CharField(required=False, allow_blank=True)
+    chronic_conditions = serializers.CharField(required=False, allow_blank=True)
+    emergency_contact_name = serializers.CharField(required=False, allow_blank=True)
+    emergency_contact_phone = serializers.CharField(required=False, allow_blank=True)
+    insurance_provider = serializers.CharField(required=False, allow_blank=True)
+    insurance_number = serializers.CharField(required=False, allow_blank=True)
+    
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'password', 'role']
+        fields = [
+            'email', 'first_name', 'last_name', 'password',
+            'phone_number', 'address', 'date_of_birth', 'gender',
+            'blood_group', 'allergies', 'chronic_conditions',
+            'emergency_contact_name', 'emergency_contact_phone',
+            'insurance_provider', 'insurance_number'
+        ]
         
     def create(self, validated_data):
+        # Get or create Patient role
+        patient_role, created = Role.objects.get_or_create(
+            name='Patient',
+            defaults={
+                'description': 'Patient user role',
+                'can_self_register': True,
+                'permissions': []
+            }
+        )
+        
+        # Extract profile and patient data
+        profile_data = {
+            'phone_number': validated_data.pop('phone_number', ''),
+            'address': validated_data.pop('address', ''),
+            'date_of_birth': validated_data.pop('date_of_birth', None),
+            'gender': validated_data.pop('gender', ''),
+            'blood_group': validated_data.pop('blood_group', ''),
+            'allergies': validated_data.pop('allergies', ''),
+            'chronic_conditions': validated_data.pop('chronic_conditions', ''),
+        }
+        
+        patient_data = {
+            'emergency_contact_name': validated_data.pop('emergency_contact_name', ''),
+            'emergency_contact_phone': validated_data.pop('emergency_contact_phone', ''),
+            'insurance_provider': validated_data.pop('insurance_provider', ''),
+            'insurance_number': validated_data.pop('insurance_number', ''),
+        }
+        
+        # Create user with Patient role
         user = User.objects.create_user(
             email=validated_data['email'],
             first_name=validated_data['first_name'],
             last_name=validated_data['last_name'],
             password=validated_data['password'],
-            role=validated_data.get('role')
+            role=patient_role  # Automatically assign Patient role
         )
+        
+        # Create profile if any profile data exists
+        if any(profile_data.values()):
+            UserProfile.objects.create(user=user, **profile_data)
+        
+        # Create patient record if any patient data exists
+        if any(patient_data.values()):
+            Patient.objects.create(user=user, **patient_data)
+        
         return user
 
 class LoginSerializer(serializers.Serializer):

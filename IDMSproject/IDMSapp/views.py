@@ -8,9 +8,10 @@ from rest_framework.permissions import BasePermission
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+from rest_framework.authtoken.models import Token  
 from django.conf import settings
 from django.db.models import Q
-from django.contrib.auth import authenticate, login
+from django.contrib.auth import authenticate, login, logout
 from .models import *
 from .serializers import *
 
@@ -96,47 +97,246 @@ class NotificationService:
 # ======================== AUTHENTICATION VIEWS ========================
 class AuthViewSet(viewsets.ViewSet, NotificationMixin):
     """Handles user authentication"""
+    permission_classes = [permissions.AllowAny]  # Allow unauthenticated access
     
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def login(self, request):
+        """Login user and return user data with auth token"""
+        print(f"Login endpoint hit! Data: {request.data}")
+        
+        # Validate input data
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        # Authenticate user
         user = authenticate(
             email=serializer.validated_data['email'],
             password=serializer.validated_data['password']
         )
         
         if not user:
+            print(f"Authentication failed for email: {serializer.validated_data['email']}")
             return Response(
-                {'error': 'Invalid credentials'}, 
+                {'error': 'Invalid email or password'}, 
                 status=status.HTTP_401_UNAUTHORIZED
             )
             
+        if not user.is_active:
+            print(f"Inactive user attempted login: {user.email}")
+            return Response(
+                {'error': 'Account is disabled. Please contact support.'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Get or create authentication token
+        token, created = Token.objects.get_or_create(user=user)
+        print(f"Token for user {user.email}: {'created' if created else 'retrieved'}")
+        
+        # Log the user in (creates session)
         login(request, user)
+        
+        # Return success response
         return Response({
+            'message': 'Login successful',
             'user': UserSerializer(user).data,
-            'token': user.auth_token.key
-        })
+            'token': token.key
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
+        """Register new patient user"""
+        print(f"Register endpoint hit! Data keys: {list(request.data.keys())}")
+        
+        # Validate input data
         serializer = UserRegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        user = serializer.save()
-        self._send_email(
-            recipient=user.email,
-            subject="Welcome to HealthLink",
-            template_name="welcome.html",
-            context={'user': user}
-        )
-        
-        return Response(
-            {'user': UserSerializer(user).data},
-            status=status.HTTP_201_CREATED
-        )
+        try:
+            # Create user with all related data
+            user = serializer.save()
+            print(f"User registered successfully: {user.email}")
+            
+            # Create authentication token for new user
+            token, created = Token.objects.get_or_create(user=user)
+            print(f"Token created for new user: {user.email}")
+            
+            # Send welcome email (optional - won't fail registration if email fails)
+            try:
+                self._send_email(
+                    recipient=user.email,
+                    subject="Welcome to HealthLink",
+                    template_name="welcome.html",
+                    context={'user': user}
+                )
+                print(f"Welcome email sent to: {user.email}")
+            except Exception as email_error:
+                print(f"Welcome email failed (non-critical): {email_error}")
+                # Don't fail registration if email fails
+            
+            return Response(
+                {
+                    'message': 'Registration successful',
+                    'user': UserSerializer(user).data,
+                    'token': token.key
+                },
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            print(f"Registration error: {str(e)}")
+            # Return detailed error for debugging
+            return Response(
+                {'error': f'Registration failed: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+    @action(detail=False, methods=['post'])
+    def logout(self, request):
+        """Logout user by deleting their authentication token"""
+        print(f"Logout endpoint hit for user: {request.user.email if request.user.is_authenticated else 'Anonymous'}")
+        
+        try:
+            if request.user.is_authenticated:
+                # Delete the user's token to invalidate it
+                Token.objects.filter(user=request.user).delete()
+                
+                # Logout from session
+                logout(request)
+                
+                return Response({
+                    'message': 'Successfully logged out'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'error': 'User not authenticated'
+                }, status=status.HTTP_401_UNAUTHORIZED)
+                
+        except Exception as e:
+            print(f"Logout error: {str(e)}")
+            return Response({
+                'error': f'Logout failed: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'])
+    def profile(self, request):
+        """Get current user's profile information"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            user_data = UserSerializer(request.user).data
+            
+            # Add profile data if exists
+            try:
+                profile_data = UserProfileSerializer(request.user.profile).data
+                user_data['profile'] = profile_data
+            except:
+                user_data['profile'] = None
+            
+            # Add patient data if user is a patient
+            if request.user.role and request.user.role.name == 'Patient':
+                try:
+                    patient_data = PatientSerializer(request.user.patient).data
+                    user_data['patient'] = patient_data
+                except:
+                    user_data['patient'] = None
+            
+            return Response({
+                'user': user_data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Profile fetch error: {str(e)}")
+            return Response({
+                'error': f'Failed to fetch profile: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def forgot_password(self, request):
+        """Send password reset email"""
+        email = request.data.get('email')
+        
+        if not email:
+            return Response({
+                'error': 'Email is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            
+            user = User.objects.get(email=email)
+            
+            # Generate password reset token (you'll need to implement this)
+            # For now, just send a simple email
+            self._send_email(
+                recipient=email,
+                subject="Password Reset Request",
+                template_name="password_reset.html",
+                context={'user': user}
+            )
+            
+            return Response({
+                'message': 'Password reset email sent'
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            # Don't reveal if email exists or not for security
+            return Response({
+                'message': 'If the email exists, a password reset link has been sent'
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Password reset error: {str(e)}")
+            return Response({
+                'error': 'Password reset failed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def change_password(self, request):
+        """Change user's password"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        
+        if not old_password or not new_password:
+            return Response({
+                'error': 'Both old and new passwords are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not request.user.check_password(old_password):
+            return Response({
+                'error': 'Current password is incorrect'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if len(new_password) < 8:
+            return Response({
+                'error': 'New password must be at least 8 characters long'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            request.user.set_password(new_password)
+            request.user.save()
+            
+            # Regenerate token for security
+            Token.objects.filter(user=request.user).delete()
+            new_token = Token.objects.create(user=request.user)
+            
+            return Response({
+                'message': 'Password changed successfully',
+                'token': new_token.key
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Password change error: {str(e)}")
+            return Response({
+                'error': 'Password change failed'
+            }, status=status.HTTP_400_BAD_REQUEST)
 # ======================== CORE MODEL VIEWSETS ========================
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
