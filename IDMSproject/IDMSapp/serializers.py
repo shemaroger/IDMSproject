@@ -40,7 +40,28 @@ class UserCreateSerializer(serializers.ModelSerializer):
         user.save()
         
         return user
-
+class ClinicSerializer(serializers.ModelSerializer):
+    """Serializer for Clinic model"""
+    staff_count = serializers.ReadOnlyField(source='get_staff_count')
+    doctors_count = serializers.SerializerMethodField()
+    nurses_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Clinic
+        fields = [
+            'id', 'name', 'address', 'phone_number', 'email',
+            'gps_coordinates', 'is_public', 'services',
+            'staff_count', 'doctors_count', 'nurses_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_doctors_count(self, obj):
+        return obj.get_doctors().count()
+    
+    def get_nurses_count(self, obj):
+        return obj.get_nurses().count()
+    
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating users via admin panel
