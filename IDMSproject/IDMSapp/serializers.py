@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import *
+from django.db import transaction
 
 # ======================== AUTHENTICATION SERIALIZERS ========================
 class RoleSerializer(serializers.ModelSerializer):
@@ -66,9 +67,20 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 class UserRegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={'input_type': 'password'},
+        min_length=8
+    )
+    clinic_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        default=[]
+    )
     
-    # Add these optional fields for patient registration
+    # Patient-specific fields
     phone_number = serializers.CharField(required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
@@ -81,36 +93,76 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     insurance_provider = serializers.CharField(required=False, allow_blank=True)
     insurance_number = serializers.CharField(required=False, allow_blank=True)
     
+    # Staff-specific fields
+    license_number = serializers.CharField(required=False, allow_blank=True)
+    specialization = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = User
         fields = [
-            'email', 'first_name', 'last_name', 'password',
-            'phone_number', 'address', 'date_of_birth', 'gender',
+            'email', 'first_name', 'last_name', 'password', 'role',
+            'clinic_ids', 'phone_number', 'address', 'date_of_birth', 'gender',
             'blood_group', 'allergies', 'chronic_conditions',
             'emergency_contact_name', 'emergency_contact_phone',
-            'insurance_provider', 'insurance_number'
+            'insurance_provider', 'insurance_number',
+            'license_number', 'specialization'
         ]
+        extra_kwargs = {
+            'role': {'required': True}
+        }
+
+    def validate(self, data):
+        role = data.get('role')
+        clinic_ids = data.get('clinic_ids', [])
         
+        # Validate role exists
+        if not isinstance(role, Role):
+            try:
+                data['role'] = Role.objects.get(name=role)
+            except Role.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"role": "Invalid role specified"}
+                )
+        
+        # Validate clinics for medical staff
+        if data['role'].name in ['Doctor', 'Nurse']:
+            if not clinic_ids:
+                raise serializers.ValidationError(
+                    {"clinic_ids": "Medical staff must be assigned to at least one clinic"}
+                )
+            
+            existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
+            if existing_clinics != len(clinic_ids):
+                raise serializers.ValidationError(
+                    {"clinic_ids": "One or more specified clinics don't exist"}
+                )
+        
+        # Validate patient fields aren't set for staff
+        if data['role'].name not in ['Patient']:
+            patient_fields = ['blood_group', 'allergies', 'chronic_conditions',
+                            'emergency_contact_name', 'emergency_contact_phone',
+                            'insurance_provider', 'insurance_number']
+            for field in patient_fields:
+                if data.get(field):
+                    raise serializers.ValidationError(
+                        {field: f"This field is only valid for patients"}
+                    )
+        
+        return data
+
+    @transaction.atomic
     def create(self, validated_data):
-        # Get or create Patient role
-        patient_role, created = Role.objects.get_or_create(
-            name='Patient',
-            defaults={
-                'description': 'Patient user role',
-                'can_self_register': True,
-                'permissions': []
-            }
-        )
+        clinic_ids = validated_data.pop('clinic_ids', [])
+        role = validated_data.pop('role')
         
-        # Extract profile and patient data
+        # Split data for different models
         profile_data = {
             'phone_number': validated_data.pop('phone_number', ''),
             'address': validated_data.pop('address', ''),
             'date_of_birth': validated_data.pop('date_of_birth', None),
             'gender': validated_data.pop('gender', ''),
-            'blood_group': validated_data.pop('blood_group', ''),
-            'allergies': validated_data.pop('allergies', ''),
-            'chronic_conditions': validated_data.pop('chronic_conditions', ''),
+            'license_number': validated_data.pop('license_number', ''),
+            'specialization': validated_data.pop('specialization', ''),
         }
         
         patient_data = {
@@ -118,26 +170,47 @@ class UserRegisterSerializer(serializers.ModelSerializer):
             'emergency_contact_phone': validated_data.pop('emergency_contact_phone', ''),
             'insurance_provider': validated_data.pop('insurance_provider', ''),
             'insurance_number': validated_data.pop('insurance_number', ''),
+            'blood_group': validated_data.pop('blood_group', ''),
+            'allergies': validated_data.pop('allergies', ''),
+            'chronic_conditions': validated_data.pop('chronic_conditions', ''),
         }
-        
-        # Create user with Patient role
+
+        # Create user
         user = User.objects.create_user(
-            email=validated_data['email'],
-            first_name=validated_data['first_name'],
-            last_name=validated_data['last_name'],
-            password=validated_data['password'],
-            role=patient_role  # Automatically assign Patient role
+            **validated_data,
+            role=role
         )
-        
-        # Create profile if any profile data exists
-        if any(profile_data.values()):
-            UserProfile.objects.create(user=user, **profile_data)
-        
-        # Create patient record if any patient data exists
-        if any(patient_data.values()):
+
+        # Create profile (for all users)
+        UserProfile.objects.create(user=user, **profile_data)
+
+        # Create patient record if role is Patient
+        if role.name == 'Patient':
             Patient.objects.create(user=user, **patient_data)
-        
+
+        # Assign to clinics if medical staff
+        if role.name in ['Doctor', 'Nurse'] and clinic_ids:
+            clinics = Clinic.objects.filter(id__in=clinic_ids)
+            user.clinics.set(clinics)
+
         return user
+class StaffRegisterSerializer(UserRegisterSerializer):
+    clinic_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=True,
+        help_text="List of clinic IDs the staff member will work at"
+    )
+    
+    class Meta(UserRegisterSerializer.Meta):
+        fields = UserRegisterSerializer.Meta.fields + ['license_number', 'specialization']
+        
+    def validate(self, data):
+        if data.get('role') and data['role'].name not in ['Doctor', 'Nurse']:
+            raise serializers.ValidationError(
+                "This endpoint is only for doctor/nurse registration"
+            )
+        return super().validate(data)    
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)

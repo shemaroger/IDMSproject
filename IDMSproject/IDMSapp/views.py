@@ -12,6 +12,7 @@ from rest_framework.authtoken.models import Token
 from django.conf import settings
 from django.db.models import Q
 from django.contrib.auth import authenticate, login, logout
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import *
 from .serializers import *
 
@@ -340,46 +341,81 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
         
 # ======================== CORE MODEL VIEWSETS ========================
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    permission_classes = [IsAdmin]
-    filterset_fields = ['role__name', 'is_active']
+    queryset = User.objects.select_related(
+        'role'
+    ).prefetch_related(
+        'profile',
+        'patient',
+        'clinics'
+    ).all()
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['role__name', 'is_active', 'clinics__id']
+    
+    def get_permissions(self):
+        if self.action == 'create':
+            return [permissions.AllowAny()]  # Allow registration
+        return [permissions.IsAdminUser()]  # Require admin for other actions
 
     def get_serializer_class(self):
-        """Return appropriate serializer based on action"""
+        from .serializers import UserSerializer, UserRegisterSerializer, UserUpdateSerializer
+        
         if self.action == 'create':
-            return UserCreateSerializer
+            return UserRegisterSerializer
         elif self.action in ['update', 'partial_update']:
             return UserUpdateSerializer
-        else:
-            return UserSerializer  # For list, retrieve actions
-            
-    def get_queryset(self):
-        """Get users with related data"""
-        return User.objects.select_related('role').prefetch_related('profile', 'patient')
-    
+        return UserSerializer
+
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """Create user with proper logging"""
-        print(f"Creating user with data: {request.data}")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
         
-        # Return the created user with full details
-        response_serializer = UserSerializer(user)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-    
-    def update(self, request, *args, **kwargs):
-        """Update user with proper logging"""
-        print(f"Updating user {kwargs.get('pk')} with data: {request.data}")
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        
-        # Return the updated user with full details
-        response_serializer = UserSerializer(user)
-        return Response(response_serializer.data)
+        try:
+            user = serializer.save()
+            headers = self.get_success_headers(serializer.data)
+            
+            # Return full user data after creation
+            from .serializers import UserSerializer
+            response_serializer = UserSerializer(user)
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED,
+                headers=headers
+            )
+        except Exception as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'], url_path='assign-clinics')
+    def assign_clinics(self, request, pk=None):
+        user = self.get_object()
+        if user.role.name not in ['Doctor', 'Nurse']:
+            return Response(
+                {"detail": "Only medical staff can be assigned to clinics"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+                
+        clinic_ids = request.data.get('clinic_ids', [])
+        if not clinic_ids:
+            return Response(
+                {"clinic_ids": "This field is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        clinics = Clinic.objects.filter(id__in=clinic_ids)
+        if clinics.count() != len(clinic_ids):
+            return Response(
+                {"clinic_ids": "One or more clinics don't exist"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        user.clinics.set(clinics)
+        return Response(
+            {"detail": "Clinics updated successfully"},
+            status=status.HTTP_200_OK
+        )
 
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
