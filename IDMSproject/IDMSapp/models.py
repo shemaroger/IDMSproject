@@ -109,6 +109,46 @@ class UserProfile(models.Model):
     
     def __str__(self):
         return f"Profile of {self.user.email}"
+class Clinic(models.Model):
+    """
+    Healthcare facility where doctors/nurses work and patients visit
+    """
+    name = models.CharField(max_length=200)
+    address = models.TextField()
+    phone_number = models.CharField(max_length=20)
+    email = models.EmailField(blank=True)
+    
+    # Staff members (doctors/nurses) assigned to this clinic
+    staff = models.ManyToManyField(
+        User,
+        limit_choices_to={'role__name__in': ['Doctor', 'Nurse']},
+        related_name='clinics'
+    )
+    
+    # Location data
+    gps_coordinates = models.CharField(max_length=50, blank=True)  # "lat,long" format
+    
+    # Operational details
+    is_public = models.BooleanField(default=True)
+    services = models.JSONField(
+        default=list,
+        help_text="List of medical services offered"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+    def get_staff_count(self):
+        return self.staff.count()
+
+    def get_doctors(self):
+        return self.staff.filter(role__name='Doctor')
+
+    def get_nurses(self):
+        return self.staff.filter(role__name='Nurse')    
     
 class Patient(models.Model):
     """
