@@ -108,21 +108,66 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Authenticate user
-        user = authenticate(
-            email=serializer.validated_data['email'],
-            password=serializer.validated_data['password']
-        )
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
         
-        if not user:
-            print(f"Authentication failed for email: {serializer.validated_data['email']}")
+        print(f"Attempting login for email: {email}")
+        
+        # DEBUG: Check if user exists and verify details
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        
+        try:
+            user_obj = User.objects.get(email=email)
+            print(f"✓ User found: {user_obj.email}")
+            print(f"  - Active: {user_obj.is_active}")
+            print(f"  - Staff: {user_obj.is_staff}")
+            print(f"  - Superuser: {user_obj.is_superuser}")
+            print(f"  - Has usable password: {user_obj.has_usable_password()}")
+            print(f"  - Password check result: {user_obj.check_password(password)}")
+            
+            # Check if password is correct manually first
+            if not user_obj.check_password(password):
+                print(f"❌ Password verification failed for {email}")
+                return Response(
+                    {'error': 'Invalid email or password'}, 
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+        except User.DoesNotExist:
+            print(f"❌ No user found with email: {email}")
             return Response(
                 {'error': 'Invalid email or password'}, 
                 status=status.HTTP_401_UNAUTHORIZED
             )
+        
+        # Now try Django's authenticate function
+        print(f"Attempting Django authenticate() for: {email}")
+        user = authenticate(
+            request=request,
+            email=email,
+            password=password
+        )
+        
+        if not user:
+            print(f"❌ Django authenticate() failed for email: {email}")
+            print("This might be an authentication backend issue")
+            
+            # Try alternative authentication approach
+            print("Trying manual authentication...")
+            if user_obj and user_obj.check_password(password) and user_obj.is_active:
+                user = user_obj
+                print("✓ Manual authentication successful")
+            else:
+                return Response(
+                    {'error': 'Authentication failed'}, 
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        else:
+            print(f"✓ Django authenticate() successful for: {email}")
             
         if not user.is_active:
-            print(f"Inactive user attempted login: {user.email}")
+            print(f"❌ User account is inactive: {user.email}")
             return Response(
                 {'error': 'Account is disabled. Please contact support.'}, 
                 status=status.HTTP_401_UNAUTHORIZED
@@ -130,15 +175,31 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
         
         # Get or create authentication token
         token, created = Token.objects.get_or_create(user=user)
-        print(f"Token for user {user.email}: {'created' if created else 'retrieved'}")
+        print(f"✓ Token for user {user.email}: {'created' if created else 'retrieved'}")
         
         # Log the user in (creates session)
-        login(request, user)
+        from django.contrib.auth import login as auth_login
+        auth_login(request, user)
         
-        # Return success response
+        # Return success response with comprehensive user data
+        user_data = UserSerializer(user).data
+        
+        # Add role information
+        if user.role:
+            user_data['role'] = {
+                'name': user.role.name,
+                'id': user.role.id
+            }
+        else:
+            user_data['role'] = None
+            
+        # Add staff status
+        user_data['is_staff'] = user.is_staff
+        user_data['is_superuser'] = user.is_superuser
+        
         return Response({
             'message': 'Login successful',
-            'user': UserSerializer(user).data,
+            'user': user_data,
             'token': token.key
         }, status=status.HTTP_200_OK)
 
@@ -156,27 +217,50 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
             user = serializer.save()
             print(f"User registered successfully: {user.email}")
             
+            # Ensure user has a default role if none assigned
+            if not user.role:
+                try:
+                    from IDMSproject.IDMSapp.models import Role  # Replace 'your_app' with your actual app name
+                    default_role = Role.objects.get(name='Patient')
+                    user.role = default_role
+                    user.save()
+                    print(f"Assigned default Patient role to: {user.email}")
+                except Role.DoesNotExist:
+                    print(f"Warning: Patient role not found in database")
+            
             # Create authentication token for new user
             token, created = Token.objects.get_or_create(user=user)
             print(f"Token created for new user: {user.email}")
             
             # Send welcome email (optional - won't fail registration if email fails)
             try:
-                self._send_email(
-                    recipient=user.email,
-                    subject="Welcome to HealthLink",
-                    template_name="welcome.html",
-                    context={'user': user}
-                )
+                self._send_welcome_email(user)
                 print(f"Welcome email sent to: {user.email}")
             except Exception as email_error:
                 print(f"Welcome email failed (non-critical): {email_error}")
                 # Don't fail registration if email fails
             
+            # Prepare user data response
+            user_data = UserSerializer(user).data
+            
+            # Add role information
+            if user.role:
+                user_data['role'] = {
+                    'name': user.role.name,
+                    'id': user.role.id
+                }
+            else:
+                user_data['role'] = None
+                print(f"Warning: User {user.email} has no role assigned")
+                
+            # Add staff status
+            user_data['is_staff'] = user.is_staff
+            user_data['is_superuser'] = user.is_superuser
+            
             return Response(
                 {
                     'message': 'Registration successful',
-                    'user': UserSerializer(user).data,
+                    'user': user_data,
                     'token': token.key
                 },
                 status=status.HTTP_201_CREATED
@@ -201,7 +285,8 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
                 Token.objects.filter(user=request.user).delete()
                 
                 # Logout from session
-                logout(request)
+                from django.contrib.auth import logout as auth_logout
+                auth_logout(request)
                 
                 return Response({
                     'message': 'Successfully logged out'
@@ -232,16 +317,37 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
             try:
                 profile_data = UserProfileSerializer(request.user.profile).data
                 user_data['profile'] = profile_data
-            except:
+            except AttributeError:
                 user_data['profile'] = None
+                print(f"No profile found for user: {request.user.email}")
             
-            # Add patient data if user is a patient
-            if request.user.role and request.user.role.name == 'Patient':
-                try:
-                    patient_data = PatientSerializer(request.user.patient).data
-                    user_data['patient'] = patient_data
-                except:
-                    user_data['patient'] = None
+            # Add role-specific data based on user type
+            if request.user.role:
+                user_data['role'] = {
+                    'name': request.user.role.name,
+                    'id': request.user.role.id
+                }
+                
+                # Add patient data if user is a patient
+                if request.user.role.name == 'Patient':
+                    try:
+                        patient_data = PatientSerializer(request.user.patient).data
+                        user_data['patient'] = patient_data
+                    except AttributeError:
+                        user_data['patient'] = None
+                        print(f"No patient data found for user: {request.user.email}")
+                
+                # Add staff/doctor data if user is healthcare professional
+                elif request.user.role.name in ['Doctor', 'Nurse', 'Admin']:
+                    user_data['is_healthcare_professional'] = True
+                    # You can add specific staff/doctor serializer data here if you have it
+                    # user_data['doctor'] = DoctorSerializer(request.user.doctor).data
+            else:
+                user_data['role'] = None
+            
+            # Add staff status
+            user_data['is_staff'] = request.user.is_staff
+            user_data['is_superuser'] = request.user.is_superuser
             
             return Response({
                 'user': user_data
@@ -250,8 +356,9 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
         except Exception as e:
             print(f"Profile fetch error: {str(e)}")
             return Response({
-                'error': f'Failed to fetch profile: {str(e)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': f'Failed to fetch profile: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def forgot_password(self, request):
@@ -269,14 +376,10 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
             
             user = User.objects.get(email=email)
             
-            # Generate password reset token (you'll need to implement this)
-            # For now, just send a simple email
-            self._send_email(
-                recipient=email,
-                subject="Password Reset Request",
-                template_name="password_reset.html",
-                context={'user': user}
-            )
+            # Send password reset email
+            self._send_password_reset_email(user)
+            
+            print(f"Password reset email sent to: {email}")
             
             return Response({
                 'message': 'Password reset email sent'
@@ -284,6 +387,7 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
             
         except User.DoesNotExist:
             # Don't reveal if email exists or not for security
+            print(f"Password reset attempted for non-existent email: {email}")
             return Response({
                 'message': 'If the email exists, a password reset link has been sent'
             }, status=status.HTTP_200_OK)
@@ -314,14 +418,23 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
                 'error': 'Current password is incorrect'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Enhanced password validation
         if len(new_password) < 8:
             return Response({
                 'error': 'New password must be at least 8 characters long'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Optional: Add more password strength checks
+        if old_password == new_password:
+            return Response({
+                'error': 'New password must be different from current password'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             request.user.set_password(new_password)
             request.user.save()
+            
+            print(f"Password changed successfully for user: {request.user.email}")
             
             # Regenerate token for security
             Token.objects.filter(user=request.user).delete()
@@ -337,12 +450,337 @@ class AuthViewSet(viewsets.ViewSet, NotificationMixin):
             return Response({
                 'error': 'Password change failed'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def refresh_token(self, request):
+        """Refresh authentication token"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            # Delete old token and create new one
+            Token.objects.filter(user=request.user).delete()
+            new_token = Token.objects.create(user=request.user)
+            
+            print(f"Token refreshed for user: {request.user.email}")
+            
+            return Response({
+                'message': 'Token refreshed successfully',
+                'token': new_token.key
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Token refresh error: {str(e)}")
+            return Response({
+                'error': 'Token refresh failed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def update_profile(self, request):
+        """Update user profile information"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            # Update basic user fields
+            user_data = {}
+            if 'first_name' in request.data:
+                user_data['first_name'] = request.data['first_name']
+            if 'last_name' in request.data:
+                user_data['last_name'] = request.data['last_name']
+            
+            if user_data:
+                for field, value in user_data.items():
+                    setattr(request.user, field, value)
+                request.user.save()
+            
+            # Update profile if data provided
+            profile_data = request.data.get('profile', {})
+            if profile_data:
+                profile, created = UserProfile.objects.get_or_create(user=request.user)
+                for field, value in profile_data.items():
+                    if hasattr(profile, field):
+                        setattr(profile, field, value)
+                profile.save()
+            
+            print(f"Profile updated for user: {request.user.email}")
+            
+            # Return updated user data
+            updated_user_data = UserSerializer(request.user).data
+            
+            # Add profile data
+            try:
+                updated_user_data['profile'] = UserProfileSerializer(request.user.profile).data
+            except AttributeError:
+                updated_user_data['profile'] = None
+            
+            # Add role information
+            if request.user.role:
+                updated_user_data['role'] = {
+                    'name': request.user.role.name,
+                    'id': request.user.role.id
+                }
+            else:
+                updated_user_data['role'] = None
+                
+            # Add staff status
+            updated_user_data['is_staff'] = request.user.is_staff
+            updated_user_data['is_superuser'] = request.user.is_superuser
+            
+            return Response({
+                'message': 'Profile updated successfully',
+                'user': updated_user_data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Profile update error: {str(e)}")
+            return Response({
+                'error': f'Profile update failed: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=['get'])
+    def permissions(self, request):
+        """Get user permissions and capabilities based on role"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        try:
+            permissions = {
+                'can_view_patients': False,
+                'can_edit_patients': False,
+                'can_view_appointments': False,
+                'can_create_appointments': False,
+                'can_view_medical_records': False,
+                'can_edit_medical_records': False,
+                'can_manage_staff': False,
+                'can_access_admin': False,
+            }
+            
+            # Set permissions based on user role and staff status
+            if request.user.is_superuser:
+                # Superusers have all permissions
+                permissions.update({key: True for key in permissions.keys()})
+            elif request.user.is_staff:
+                # Staff members have elevated permissions
+                permissions.update({
+                    'can_view_patients': True,
+                    'can_view_appointments': True,
+                    'can_create_appointments': True,
+                    'can_view_medical_records': True,
+                    'can_access_admin': True,
+                })
+                
+                # Role-specific permissions
+                if request.user.role:
+                    if request.user.role.name == 'Doctor':
+                        permissions.update({
+                            'can_edit_patients': True,
+                            'can_edit_medical_records': True,
+                        })
+                    elif request.user.role.name == 'Admin':
+                        permissions.update({
+                            'can_edit_patients': True,
+                            'can_edit_medical_records': True,
+                            'can_manage_staff': True,
+                        })
+                        
+            elif request.user.role and request.user.role.name == 'Patient':
+                # Patients can only view their own data
+                permissions.update({
+                    'can_view_appointments': True,  # Own appointments only
+                    'can_view_medical_records': True,  # Own records only
+                })
+            
+            return Response({
+                'permissions': permissions,
+                'role': request.user.role.name if request.user.role else None,
+                'is_staff': request.user.is_staff,
+                'is_superuser': request.user.is_superuser
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Permissions fetch error: {str(e)}")
+            return Response({
+                'error': f'Failed to fetch permissions: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def _send_welcome_email(self, user):
+        """Send welcome email to new user using plain text"""
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
+        try:
+            subject = 'Welcome to HealthLink Rwanda! 🏥'
+            
+            message = f"""
+Hello {user.first_name}! 👋
+
+Welcome to HealthLink Rwanda! We're thrilled to have you join our healthcare community.
+
+Your Account Details:
+📧 Email: {user.email}
+👤 Name: {user.first_name} {user.last_name}
+🏷️ Role: {user.role.name if user.role else 'Patient'}
+📅 Account Created: {user.date_joined.strftime('%B %d, %Y')}
+
+What you can do with HealthLink:
+✅ Book appointments with healthcare providers
+✅ Access your medical records securely
+✅ Consult with doctors through telemedicine
+✅ Track your health metrics and progress
+✅ Access emergency services quickly
+
+Getting Started:
+1. Log in to your account at {getattr(settings, 'FRONTEND_URL', 'https://healthlink.rw')}/login
+2. Complete your profile information
+3. Book your first appointment or explore our services
+
+Need Help?
+📧 Email: support@healthlink.rw
+📞 Phone: +250 788 123 456
+🕐 Available: Monday - Friday, 8:00 AM - 6:00 PM
+
+Thank you for choosing HealthLink Rwanda. Together, we're building a healthier future for all Rwandans!
+
+Best regards,
+The HealthLink Rwanda Team
+
+---
+HealthLink Rwanda - Improving Healthcare Access • Empowering Communities • Saving Lives
+
+This email was sent to {user.email}. If you didn't create this account, please contact our support team immediately.
+"""
+            
+            # Send email
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+            
+        except Exception as e:
+            print(f"Error sending welcome email: {str(e)}")
+            raise e
+
+    def _send_password_reset_email(self, user):
+        """Send password reset email using plain text"""
+        from django.core.mail import send_mail
+        from django.conf import settings
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+        
+        try:
+            # Generate password reset token
+            token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            
+            # Create reset URL
+            reset_url = f"{getattr(settings, 'FRONTEND_URL', 'https://healthlink.rw')}/reset-password/{uid}/{token}/"
+            
+            subject = '🔒 Password Reset Request - HealthLink Rwanda'
+            
+            message = f"""
+Hello {user.first_name},
+
+We received a request to reset the password for your HealthLink Rwanda account ({user.email}).
+
+🔗 Reset Your Password:
+{reset_url}
+
+⚠️ SECURITY NOTICE:
+• If you didn't request this password reset, please ignore this email
+• This link will expire in 24 hours
+• The link can only be used once
+• Make sure you're on the official HealthLink Rwanda website
+
+🔒 Password Security Tips:
+• Use at least 8 characters
+• Include uppercase and lowercase letters
+• Add numbers and special characters
+• Don't reuse passwords from other accounts
+• Consider using a password manager
+
+Need Help?
+📧 Email: support@healthlink.rw
+📞 Phone: +250 788 123 456
+🕐 Available: Monday - Friday, 8:00 AM - 6:00 PM
+
+For your security, never share your login credentials with anyone.
+
+Best regards,
+The HealthLink Rwanda Team
+
+---
+HealthLink Rwanda - Secure Healthcare • Trusted Platform • Your Privacy Matters
+
+This email was sent to {user.email} in response to a password reset request.
+"""
+            
+            # Send email
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+            
+        except Exception as e:
+            print(f"Error sending password reset email: {str(e)}")
+            raise e
 # ======================== CORE MODEL VIEWSETS ========================
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    serializer_class = UserSerializer
     permission_classes = [IsAdmin]
     filterset_fields = ['role__name', 'is_active']
+
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action"""
+        if self.action == 'create':
+            return UserCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return UserUpdateSerializer
+        else:
+            return UserSerializer  # For list, retrieve actions
+            
+    def get_queryset(self):
+        """Get users with related data"""
+        return User.objects.select_related('role').prefetch_related('profile', 'patient')
+    
+    def create(self, request, *args, **kwargs):
+        """Create user with proper logging"""
+        print(f"Creating user with data: {request.data}")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        # Return the created user with full details
+        response_serializer = UserSerializer(user)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
+    def update(self, request, *args, **kwargs):
+        """Update user with proper logging"""
+        print(f"Updating user {kwargs.get('pk')} with data: {request.data}")
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        # Return the updated user with full details
+        response_serializer = UserSerializer(user)
+        return Response(response_serializer.data)
 
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()

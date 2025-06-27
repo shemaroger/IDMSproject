@@ -18,7 +18,53 @@ class UserSerializer(serializers.ModelSerializer):
             'password': {'write_only': True},
             'is_active': {'read_only': True}
         }
+class UserCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating users via admin panel (not registration)
+    """
+    password = serializers.CharField(write_only=True, required=True, min_length=8)
+    role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=True)
+    
+    class Meta:
+        model = User
+        fields = ['email', 'first_name', 'last_name', 'password', 'role', 'is_active', 'is_staff']
+        
+    def create(self, validated_data):
+        # Extract password
+        password = validated_data.pop('password')
+        
+        # Create user
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        
+        return user
 
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating users via admin panel
+    """
+    role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False)
+    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    
+    class Meta:
+        model = User
+        fields = ['email', 'first_name', 'last_name', 'password', 'role', 'is_active', 'is_staff']
+        
+    def update(self, instance, validated_data):
+        # Handle password separately
+        password = validated_data.pop('password', None)
+        
+        # Update other fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        # Set password if provided
+        if password:
+            instance.set_password(password)
+            
+        instance.save()
+        return instance
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     
