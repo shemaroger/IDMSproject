@@ -8,17 +8,49 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = '__all__'
         read_only_fields = ['created_at', 'updated_at']
+class ClinicSerializer(serializers.ModelSerializer):
+    """Serializer for Clinic model"""
+    staff_count = serializers.ReadOnlyField(source='get_staff_count')
+    doctors_count = serializers.SerializerMethodField()
+    nurses_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Clinic
+        fields = [
+            'id', 'name', 'address', 'phone_number', 'email',
+            'gps_coordinates', 'is_public', 'services',
+            'staff_count', 'doctors_count', 'nurses_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_doctors_count(self, obj):
+        return obj.get_doctors().count()
+    
+    def get_nurses_count(self, obj):
+        return obj.get_nurses().count()        
+
 
 class UserSerializer(serializers.ModelSerializer):
-    role = RoleSerializer(read_only=True)  # 🔴 ADD THIS LINE - shows full role object
+    """Enhanced User serializer with clinic information"""
+    role = RoleSerializer(read_only=True)
+    clinics = ClinicSerializer(many=True, read_only=True)  # Show assigned clinics
+    clinic_names = serializers.SerializerMethodField()  # Quick clinic names list
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'role', 'is_active', 'date_joined']
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'role', 'is_active', 
+            'is_staff', 'date_joined', 'last_login', 'clinics', 'clinic_names'
+        ]
         extra_kwargs = {
             'password': {'write_only': True},
             'is_active': {'read_only': True}
         }
+    
+    def get_clinic_names(self, obj):
+        """Return list of clinic names for quick display"""
+        return [clinic.name for clinic in obj.clinics.all()]
 class UserCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating users via admin panel (not registration)
@@ -40,28 +72,6 @@ class UserCreateSerializer(serializers.ModelSerializer):
         user.save()
         
         return user
-class ClinicSerializer(serializers.ModelSerializer):
-    """Serializer for Clinic model"""
-    staff_count = serializers.ReadOnlyField(source='get_staff_count')
-    doctors_count = serializers.SerializerMethodField()
-    nurses_count = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = Clinic
-        fields = [
-            'id', 'name', 'address', 'phone_number', 'email',
-            'gps_coordinates', 'is_public', 'services',
-            'staff_count', 'doctors_count', 'nurses_count',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['created_at', 'updated_at']
-    
-    def get_doctors_count(self, obj):
-        return obj.get_doctors().count()
-    
-    def get_nurses_count(self, obj):
-        return obj.get_nurses().count()
-    
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating users via admin panel
