@@ -187,6 +187,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         return instance
 
 class UserRegisterSerializer(serializers.ModelSerializer):
+    """Enhanced registration serializer with clinic assignment"""
     password = serializers.CharField(
         write_only=True,
         required=True,
@@ -197,7 +198,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         child=serializers.IntegerField(),
         write_only=True,
         required=False,
-        default=[]
+        default=list
     )
     
     # Patient-specific fields
@@ -232,6 +233,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, data):
+        """Enhanced validation with clinic assignment"""
         role = data.get('role')
         clinic_ids = data.get('clinic_ids', [])
         
@@ -248,7 +250,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         if data['role'].name in ['Doctor', 'Nurse']:
             if not clinic_ids:
                 raise serializers.ValidationError(
-                    {"clinic_ids": "Medical staff must be assigned to at least one clinic"}
+                    {"clinic_ids": f"{data['role'].name} must be assigned to at least one clinic"}
                 )
             
             existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
@@ -256,6 +258,12 @@ class UserRegisterSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"clinic_ids": "One or more specified clinics don't exist"}
                 )
+        
+        # Ensure non-medical staff don't have clinic assignments
+        elif clinic_ids:
+            raise serializers.ValidationError(
+                {"clinic_ids": "Only medical staff can be assigned to clinics"}
+            )
         
         # Validate patient fields aren't set for staff
         if data['role'].name not in ['Patient']:
