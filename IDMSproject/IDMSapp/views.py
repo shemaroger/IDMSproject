@@ -1,6 +1,7 @@
 from datetime import timedelta
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
+from rest_framework import filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -416,7 +417,72 @@ class UserViewSet(viewsets.ModelViewSet):
             {"detail": "Clinics updated successfully"},
             status=status.HTTP_200_OK
         )
-
+class ClinicViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing clinics"""
+    queryset = Clinic.objects.all()
+    serializer_class = ClinicSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['is_public']
+    search_fields = ['name', 'address']
+    
+    def get_permissions(self):
+        """Allow read access to authenticated users, write access to admins"""
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
+    
+    @action(detail=True, methods=['get'])
+    def staff(self, request, pk=None):
+        """Get all staff members assigned to this clinic"""
+        clinic = self.get_object()
+        staff_members = clinic.staff.all()
+        from .serializers import UserSerializer
+        serializer = UserSerializer(staff_members, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def assign_staff(self, request, pk=None):
+        """Assign staff members to this clinic"""
+        clinic = self.get_object()
+        user_ids = request.data.get('user_ids', [])
+        
+        if not user_ids:
+            return Response(
+                {"error": "user_ids is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        users = User.objects.filter(
+            id__in=user_ids,
+            role__name__in=['Doctor', 'Nurse']
+        )
+        
+        if users.count() != len(user_ids):
+            return Response(
+                {"error": "Some users are not medical staff or don't exist"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        clinic.staff.add(*users)
+        return Response({"message": f"Successfully assigned {users.count()} staff members"})
+    
+    @action(detail=True, methods=['post'])
+    def remove_staff(self, request, pk=None):
+        """Remove staff members from this clinic"""
+        clinic = self.get_object()
+        user_ids = request.data.get('user_ids', [])
+        
+        if not user_ids:
+            return Response(
+                {"error": "user_ids is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        users = clinic.staff.filter(id__in=user_ids)
+        clinic.staff.remove(*users)
+        
+        return Response({"message": f"Successfully removed {users.count()} staff members"})
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
