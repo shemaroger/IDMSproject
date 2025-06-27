@@ -52,38 +52,116 @@ class UserSerializer(serializers.ModelSerializer):
         """Return list of clinic names for quick display"""
         return [clinic.name for clinic in obj.clinics.all()]
 class UserCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for creating users via admin panel (not registration)
-    """
+    """Enhanced serializer for creating users with clinic assignment"""
     password = serializers.CharField(write_only=True, required=True, min_length=8)
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=True)
+    clinic_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        default=list
+    )
     
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'password', 'role', 'is_active', 'is_staff']
+        fields = [
+            'email', 'first_name', 'last_name', 'password', 'role', 
+            'is_active', 'is_staff', 'clinic_ids'
+        ]
         
+    def validate(self, data):
+        """Validate clinic assignments for medical staff"""
+        role = data.get('role')
+        clinic_ids = data.get('clinic_ids', [])
+        
+        # Validate clinic assignment for medical staff
+        if role and role.name in ['Doctor', 'Nurse']:
+            if not clinic_ids:
+                raise serializers.ValidationError({
+                    'clinic_ids': f'{role.name} must be assigned to at least one clinic'
+                })
+            
+            # Validate that all clinic IDs exist
+            existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
+            if existing_clinics != len(clinic_ids):
+                raise serializers.ValidationError({
+                    'clinic_ids': 'One or more specified clinics do not exist'
+                })
+        
+        # Ensure non-medical staff don't have clinic assignments
+        elif clinic_ids:
+            raise serializers.ValidationError({
+                'clinic_ids': 'Only medical staff (Doctors/Nurses) can be assigned to clinics'
+            })
+        
+        return data
+        
+    @transaction.atomic
     def create(self, validated_data):
-        # Extract password
-        password = validated_data.pop('password')
+        clinic_ids = validated_data.pop('clinic_ids', [])
         
-        # Create user
+        # Extract password and create user
+        password = validated_data.pop('password')
         user = User(**validated_data)
         user.set_password(password)
         user.save()
         
+        # Assign clinics if medical staff
+        if clinic_ids and user.role.name in ['Doctor', 'Nurse']:
+            clinics = Clinic.objects.filter(id__in=clinic_ids)
+            user.clinics.set(clinics)
+        
         return user
 class UserUpdateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for updating users via admin panel
-    """
+    """Enhanced serializer for updating users with clinic assignment"""
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
+    clinic_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        allow_empty=True
+    )
     
     class Meta:
         model = User
-        fields = ['email', 'first_name', 'last_name', 'password', 'role', 'is_active', 'is_staff']
+        fields = [
+            'email', 'first_name', 'last_name', 'password', 'role', 
+            'is_active', 'is_staff', 'clinic_ids'
+        ]
         
+    def validate(self, data):
+        """Validate clinic assignments for medical staff during update"""
+        role = data.get('role') or self.instance.role
+        clinic_ids = data.get('clinic_ids')
+        
+        # Only validate clinic_ids if it's being updated
+        if clinic_ids is not None:
+            if role and role.name in ['Doctor', 'Nurse']:
+                if not clinic_ids:
+                    raise serializers.ValidationError({
+                        'clinic_ids': f'{role.name} must be assigned to at least one clinic'
+                    })
+                
+                # Validate that all clinic IDs exist
+                existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
+                if existing_clinics != len(clinic_ids):
+                    raise serializers.ValidationError({
+                        'clinic_ids': 'One or more specified clinics do not exist'
+                    })
+            
+            # Ensure non-medical staff don't have clinic assignments
+            elif clinic_ids:
+                raise serializers.ValidationError({
+                    'clinic_ids': 'Only medical staff (Doctors/Nurses) can be assigned to clinics'
+                })
+        
+        return data
+        
+    @transaction.atomic
     def update(self, instance, validated_data):
+        clinic_ids = validated_data.pop('clinic_ids', None)
+        
         # Handle password separately
         password = validated_data.pop('password', None)
         
@@ -96,7 +174,18 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             instance.set_password(password)
             
         instance.save()
+        
+        # Update clinic assignments if provided
+        if clinic_ids is not None:
+            if instance.role.name in ['Doctor', 'Nurse'] and clinic_ids:
+                clinics = Clinic.objects.filter(id__in=clinic_ids)
+                instance.clinics.set(clinics)
+            else:
+                # Clear clinic assignments for non-medical staff
+                instance.clinics.clear()
+        
         return instance
+
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
