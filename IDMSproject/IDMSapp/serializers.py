@@ -256,22 +256,47 @@ class UserRegisterSerializer(serializers.ModelSerializer):
             'license_number', 'specialization'
         ]
         extra_kwargs = {
-            'role': {'required': True}
+            'role': {'required': False}  # Make role optional
         }
 
     def validate(self, data):
         """Enhanced validation with clinic assignment"""
         role = data.get('role')
-        clinic_ids = data.get('clinic_ids', [])
         
-        # Validate role exists
-        if not isinstance(role, Role):
+        print(f"UserRegisterSerializer.validate: received role = {role}, type = {type(role)}")
+        
+        # Auto-assign Patient role if no role is provided
+        if not role:
             try:
-                data['role'] = Role.objects.get(name=role)
+                patient_role = Role.objects.get(name='Patient')
+                data['role'] = patient_role
+                print(f"Auto-assigned Patient role to registration")
             except Role.DoesNotExist:
                 raise serializers.ValidationError(
-                    {"role": "Invalid role specified"}
+                    {"role": "Patient role not found. Please contact administrator."}
                 )
+        elif isinstance(role, str):
+            # If role is passed as string, convert to Role object
+            try:
+                role_obj = Role.objects.get(name=role)
+                data['role'] = role_obj
+                print(f"Converted role string '{role}' to Role object: {role_obj}")
+            except Role.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"role": f"Role '{role}' not found"}
+                )
+        elif isinstance(role, int):
+            # If role is passed as ID, get the Role object
+            try:
+                role_obj = Role.objects.get(id=role)
+                data['role'] = role_obj
+                print(f"Converted role ID '{role}' to Role object: {role_obj}")
+            except Role.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"role": f"Role with ID '{role}' not found"}
+                )
+        
+        clinic_ids = data.get('clinic_ids', [])
         
         # Validate clinics for medical staff
         if data['role'].name in ['Doctor', 'Nurse']:
@@ -292,16 +317,20 @@ class UserRegisterSerializer(serializers.ModelSerializer):
                 {"clinic_ids": "Only medical staff can be assigned to clinics"}
             )
         
-        # Validate patient fields aren't set for staff
+        # Validate patient fields aren't set for non-patient staff
         if data['role'].name not in ['Patient']:
             patient_fields = ['blood_group', 'allergies', 'chronic_conditions',
                             'emergency_contact_name', 'emergency_contact_phone',
                             'insurance_provider', 'insurance_number']
             for field in patient_fields:
                 if data.get(field):
-                    raise serializers.ValidationError(
-                        {field: f"This field is only valid for patients"}
-                    )
+                    # For Admin role, we'll allow patient fields but warn
+                    if data['role'].name == 'Admin':
+                        print(f"Warning: Admin user has patient field {field} set")
+                    else:
+                        raise serializers.ValidationError(
+                            {field: f"This field is only valid for patients"}
+                        )
         
         return data
 
@@ -309,6 +338,8 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         clinic_ids = validated_data.pop('clinic_ids', [])
         role = validated_data.pop('role')
+        
+        print(f"Creating user with role: {role.name}")
         
         # Split data for different models
         profile_data = {
@@ -320,33 +351,94 @@ class UserRegisterSerializer(serializers.ModelSerializer):
             'specialization': validated_data.pop('specialization', ''),
         }
         
-        patient_data = {
-            'emergency_contact_name': validated_data.pop('emergency_contact_name', ''),
-            'emergency_contact_phone': validated_data.pop('emergency_contact_phone', ''),
-            'insurance_provider': validated_data.pop('insurance_provider', ''),
-            'insurance_number': validated_data.pop('insurance_number', ''),
-            'blood_group': validated_data.pop('blood_group', ''),
-            'allergies': validated_data.pop('allergies', ''),
-            'chronic_conditions': validated_data.pop('chronic_conditions', ''),
-        }
+        # Patient-specific data - only include fields that exist in Patient model
+        patient_data = {}
+        patient_fields = [
+            'emergency_contact_name', 'emergency_contact_phone', 
+            'insurance_provider', 'insurance_number'
+        ]
+        
+        # Medical fields that might be in UserProfile instead of Patient
+        medical_fields = ['blood_group', 'allergies', 'chronic_conditions']
+        
+        for field in patient_fields:
+            patient_data[field] = validated_data.pop(field, '')
+            
+        # Handle medical fields - check if they belong in Patient or UserProfile
+        for field in medical_fields:
+            value = validated_data.pop(field, '')
+            # Try to add to patient_data first, but be prepared to move to profile_data
+            patient_data[field] = value
 
         # Create user
         user = User.objects.create_user(
             **validated_data,
             role=role
         )
+        
+        print(f"User created successfully: {user.email}, role: {user.role.name}")
 
         # Create profile (for all users)
         UserProfile.objects.create(user=user, **profile_data)
+        print(f"Profile created for user: {user.email}")
 
         # Create patient record if role is Patient
         if role.name == 'Patient':
-            Patient.objects.create(user=user, **patient_data)
+            try:
+                # Only pass fields that exist in the Patient model
+                safe_patient_data = {k: v for k, v in patient_data.items() 
+                                   if k in ['emergency_contact_name', 'emergency_contact_phone', 
+                                          'insurance_provider', 'insurance_number']}
+                Patient.objects.create(user=user, **safe_patient_data)
+                print(f"Patient record created for user: {user.email}")
+                
+                # Add medical fields to profile if they don't belong in Patient model
+                medical_data = {k: v for k, v in patient_data.items() 
+                              if k in ['blood_group', 'allergies', 'chronic_conditions'] and v}
+                if medical_data:
+                    # Update the profile with medical data
+                    profile = user.profile
+                    for field, value in medical_data.items():
+                        if hasattr(profile, field):
+                            setattr(profile, field, value)
+                    profile.save()
+                    print(f"Medical data added to profile for user: {user.email}")
+                    
+            except Exception as e:
+                print(f"Error creating patient record: {e}")
+                # If Patient creation fails, just log it - don't fail the whole registration
+                
+        elif role.name == 'Admin' and any(patient_data.values()):
+            # For Admin users, try to create patient record with available fields
+            try:
+                safe_patient_data = {k: v for k, v in patient_data.items() 
+                                   if k in ['emergency_contact_name', 'emergency_contact_phone', 
+                                          'insurance_provider', 'insurance_number'] and v}
+                if safe_patient_data:
+                    Patient.objects.create(user=user, **safe_patient_data)
+                    print(f"Patient record created for Admin user: {user.email}")
+                    
+                # Add medical fields to profile
+                medical_data = {k: v for k, v in patient_data.items() 
+                              if k in ['blood_group', 'allergies', 'chronic_conditions'] and v}
+                if medical_data:
+                    profile = user.profile
+                    for field, value in medical_data.items():
+                        if hasattr(profile, field):
+                            setattr(profile, field, value)
+                    profile.save()
+                    print(f"Medical data added to profile for Admin user: {user.email}")
+                    
+            except Exception as e:
+                print(f"Error creating patient record for admin: {e}")
+                # Non-critical error for admin users
 
         # Assign to clinics if medical staff
         if role.name in ['Doctor', 'Nurse'] and clinic_ids:
             clinics = Clinic.objects.filter(id__in=clinic_ids)
-            user.clinics.set(clinics)
+            for clinic in clinics:
+                clinic.staff.add(user)
+            print(f"Assigned user {user.email} to {clinics.count()} clinics")
 
         return user
 class StaffRegisterSerializer(UserRegisterSerializer):
@@ -389,14 +481,113 @@ class PatientSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['created_at']
 
-class AppointmentSerializer(serializers.ModelSerializer):
+class AppointmentCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating appointments"""
+    
+    class Meta:
+        model = Appointment
+        fields = ['healthcare_provider', 'appointment_date', 'reason']
+    
+    def validate_appointment_date(self, value):
+        """Validate appointment date is in the future"""
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("Appointment date must be in the future")
+        return value
+    
+    def validate_healthcare_provider(self, value):
+        """Validate healthcare provider is a doctor or nurse"""
+        if not value.role or value.role.name not in ['Doctor', 'Nurse']:
+            raise serializers.ValidationError("Selected user is not a healthcare provider")
+        return value
+    
+    def create(self, validated_data):
+        """Create appointment with patient from request user"""
+        request = self.context.get('request')
+        patient = request.user.patient
+        return Appointment.objects.create(
+            patient=patient,
+            **validated_data
+        )
+
+class AppointmentUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating appointments"""
+    
+    class Meta:
+        model = Appointment
+        fields = ['healthcare_provider', 'appointment_date', 'reason', 'status', 'notes']
+        read_only_fields = ['notes']  # Only healthcare providers can add notes
+    
+    def validate_appointment_date(self, value):
+        """Validate appointment date is in the future for pending appointments"""
+        from django.utils import timezone
+        instance = getattr(self, 'instance', None)
+        if instance and instance.status == 'P' and value <= timezone.now():
+            raise serializers.ValidationError("Appointment date must be in the future")
+        return value
+    
+    def validate_status(self, value):
+        """Validate status transitions"""
+        instance = getattr(self, 'instance', None)
+        request = self.context.get('request')
+        
+        if not instance:
+            return value
+        
+        # Patients can only cancel their own pending appointments
+        if request.user.role.name == 'Patient':
+            if instance.status != 'P':
+                raise serializers.ValidationError("Can only modify pending appointments")
+            if value not in ['P', 'C']:
+                raise serializers.ValidationError("Patients can only cancel appointments")
+        
+        return value
+
+class AppointmentDetailSerializer(serializers.ModelSerializer):
+    """Detailed serializer for appointment display"""
     patient = PatientSerializer(read_only=True)
     healthcare_provider = UserSerializer(read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    can_edit = serializers.SerializerMethodField()
+    can_cancel = serializers.SerializerMethodField()
     
     class Meta:
         model = Appointment
         fields = '__all__'
-        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_can_edit(self, obj):
+        """Check if current user can edit this appointment"""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        
+        # Patients can edit their own pending appointments
+        if request.user.role.name == 'Patient':
+            return obj.patient.user == request.user and obj.status == 'P'
+        
+        # Healthcare providers can edit appointments assigned to them
+        if request.user.role.name in ['Doctor', 'Nurse']:
+            return obj.healthcare_provider == request.user
+        
+        # Admins can edit any appointment
+        return request.user.role.name == 'Admin'
+    
+    def get_can_cancel(self, obj):
+        """Check if current user can cancel this appointment"""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        
+        # Can only cancel pending or approved appointments
+        if obj.status not in ['P', 'A']:
+            return False
+        
+        # Patients can cancel their own appointments
+        if request.user.role.name == 'Patient':
+            return obj.patient.user == request.user
+        
+        # Healthcare providers and admins can cancel any appointment
+        return request.user.role.name in ['Doctor', 'Nurse', 'Admin']
 
 class DiseaseSerializer(serializers.ModelSerializer):
     """
@@ -690,35 +881,14 @@ class HealthcareWorkerAlertSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['sent_at', 'read_at']
 
-# ======================== PREVENTION SERIALIZERS ========================
-# class PreventiveTipSerializer(serializers.ModelSerializer):
-#     related_symptoms = SymptomSerializer(many=True, read_only=True)
-    
-#     class Meta:
-#         model = PreventionTip
-#         fields = '__all__'
-#         read_only_fields = ['created_at', 'last_updated']
 
-# ======================== MEDICAL RECORD SERIALIZERS ========================
 class MedicalRecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalRecord
         fields = '__all__'
         read_only_fields = ['date', 'is_archived']
 
-# ======================== REQUEST SERIALIZERS ========================
-# class SymptomCheckRequestSerializer(serializers.Serializer):
-#     symptoms = serializers.ListField(
-#         child=serializers.IntegerField(min_value=1),
-#         help_text="List of symptom IDs",
-#         min_length=1
-#     )
-#     location = serializers.CharField(required=False, allow_blank=True)
-    
-#     def validate_symptoms(self, value):
-#         if not Symptom.objects.filter(id__in=value).exists():
-#             raise serializers.ValidationError("One or more symptom IDs are invalid")
-#         return value
+
 
 class AppointmentRequestSerializer(serializers.Serializer):
     patient_id = serializers.IntegerField(min_value=1)
@@ -762,6 +932,12 @@ class OutbreakAlertResponseSerializer(serializers.Serializer):
 
 
 # ======================== MEDICAL HISTORY SERIALIZER ========================
+class AppointmentSerializer(serializers.ModelSerializer):
+    """Basic serializer for Appointment model (for use in MedicalHistorySerializer)"""
+    class Meta:
+        model = Appointment
+        fields = '__all__'
+
 class MedicalHistorySerializer(serializers.ModelSerializer):
     """Serializes complete medical history for a patient"""
     patient = PatientSerializer(read_only=True)
