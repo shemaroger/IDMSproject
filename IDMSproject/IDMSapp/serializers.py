@@ -59,7 +59,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
         child=serializers.IntegerField(),
         write_only=True,
         required=False,
-        default=list
+        default=list,
+        allow_empty=True
     )
     
     class Meta:
@@ -74,6 +75,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
         role = data.get('role')
         clinic_ids = data.get('clinic_ids', [])
         
+        print(f"UserCreateSerializer.validate: role={role.name if role else None}, clinic_ids={clinic_ids}")
+        
         # Validate clinic assignment for medical staff
         if role and role.name in ['Doctor', 'Nurse']:
             if not clinic_ids:
@@ -82,23 +85,21 @@ class UserCreateSerializer(serializers.ModelSerializer):
                 })
             
             # Validate that all clinic IDs exist
-            existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
-            if existing_clinics != len(clinic_ids):
+            existing_clinics = Clinic.objects.filter(id__in=clinic_ids)
+            if existing_clinics.count() != len(clinic_ids):
+                invalid_ids = set(clinic_ids) - set(existing_clinics.values_list('id', flat=True))
                 raise serializers.ValidationError({
-                    'clinic_ids': 'One or more specified clinics do not exist'
+                    'clinic_ids': f'Clinics with IDs {list(invalid_ids)} do not exist'
                 })
-        
-        # Ensure non-medical staff don't have clinic assignments
-        elif clinic_ids:
-            raise serializers.ValidationError({
-                'clinic_ids': 'Only medical staff (Doctors/Nurses) can be assigned to clinics'
-            })
         
         return data
         
     @transaction.atomic
     def create(self, validated_data):
+        """Create user with clinic assignments"""
         clinic_ids = validated_data.pop('clinic_ids', [])
+        
+        print(f"UserCreateSerializer.create: clinic_ids={clinic_ids}")
         
         # Extract password and create user
         password = validated_data.pop('password')
@@ -106,10 +107,23 @@ class UserCreateSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         
-        # Assign clinics if medical staff
+        print(f"User created: {user.email}, role: {user.role.name}")
+        
+        # Assign clinics if medical staff and clinic_ids provided
         if clinic_ids and user.role.name in ['Doctor', 'Nurse']:
+            # The key difference: We add the user to clinics via the Clinic model
+            # since that's where the ManyToMany field is defined
             clinics = Clinic.objects.filter(id__in=clinic_ids)
-            user.clinics.set(clinics)
+            for clinic in clinics:
+                clinic.staff.add(user)
+            
+            print(f"Assigned user {user.email} to {clinics.count()} clinics")
+            
+            # Verify the assignment
+            assigned_clinics = user.clinics.all()
+            print(f"Verification: User {user.email} is now assigned to {assigned_clinics.count()} clinics: {list(assigned_clinics)}")
+        else:
+            print(f"No clinic assignment for user {user.email} (role: {user.role.name})")
         
         return user
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -120,7 +134,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         child=serializers.IntegerField(),
         write_only=True,
         required=False,
-        allow_empty=True
+        allow_empty=True,
+        allow_null=True
     )
     
     class Meta:
@@ -135,6 +150,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         role = data.get('role') or self.instance.role
         clinic_ids = data.get('clinic_ids')
         
+        print(f"UserUpdateSerializer.validate: role={role.name if role else None}, clinic_ids={clinic_ids}")
+        
         # Only validate clinic_ids if it's being updated
         if clinic_ids is not None:
             if role and role.name in ['Doctor', 'Nurse']:
@@ -144,23 +161,21 @@ class UserUpdateSerializer(serializers.ModelSerializer):
                     })
                 
                 # Validate that all clinic IDs exist
-                existing_clinics = Clinic.objects.filter(id__in=clinic_ids).count()
-                if existing_clinics != len(clinic_ids):
+                existing_clinics = Clinic.objects.filter(id__in=clinic_ids)
+                if existing_clinics.count() != len(clinic_ids):
+                    invalid_ids = set(clinic_ids) - set(existing_clinics.values_list('id', flat=True))
                     raise serializers.ValidationError({
-                        'clinic_ids': 'One or more specified clinics do not exist'
+                        'clinic_ids': f'Clinics with IDs {list(invalid_ids)} do not exist'
                     })
-            
-            # Ensure non-medical staff don't have clinic assignments
-            elif clinic_ids:
-                raise serializers.ValidationError({
-                    'clinic_ids': 'Only medical staff (Doctors/Nurses) can be assigned to clinics'
-                })
         
         return data
         
     @transaction.atomic
     def update(self, instance, validated_data):
+        """Update user with clinic assignments"""
         clinic_ids = validated_data.pop('clinic_ids', None)
+        
+        print(f"UserUpdateSerializer.update: clinic_ids={clinic_ids}")
         
         # Handle password separately
         password = validated_data.pop('password', None)
@@ -175,14 +190,26 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             
         instance.save()
         
+        print(f"User updated: {instance.email}, role: {instance.role.name}")
+        
         # Update clinic assignments if provided
         if clinic_ids is not None:
+            # First, remove the user from all current clinics
+            current_clinics = Clinic.objects.filter(staff=instance)
+            for clinic in current_clinics:
+                clinic.staff.remove(instance)
+            print(f"Removed user {instance.email} from {current_clinics.count()} previous clinics")
+            
+            # Then add to new clinics if role is medical staff
             if instance.role.name in ['Doctor', 'Nurse'] and clinic_ids:
-                clinics = Clinic.objects.filter(id__in=clinic_ids)
-                instance.clinics.set(clinics)
-            else:
-                # Clear clinic assignments for non-medical staff
-                instance.clinics.clear()
+                new_clinics = Clinic.objects.filter(id__in=clinic_ids)
+                for clinic in new_clinics:
+                    clinic.staff.add(instance)
+                print(f"Added user {instance.email} to {new_clinics.count()} new clinics")
+                
+                # Verify the assignment
+                assigned_clinics = instance.clinics.all()
+                print(f"Verification: User {instance.email} is now assigned to {assigned_clinics.count()} clinics: {list(assigned_clinics)}")
         
         return instance
 

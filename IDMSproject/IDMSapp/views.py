@@ -347,50 +347,113 @@ class UserViewSet(viewsets.ModelViewSet):
     ).prefetch_related(
         'profile',
         'patient',
-        'clinics'
+        'clinics'  # This will prefetch the related clinics
     ).all()
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['role__name', 'is_active', 'clinics__id']
     
     def get_permissions(self):
         if self.action == 'create':
-            return [permissions.AllowAny()]  # Allow registration
-        return [permissions.IsAdminUser()]  # Require admin for other actions
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
 
     def get_serializer_class(self):
-        from .serializers import UserSerializer, UserRegisterSerializer, UserUpdateSerializer
-        
+        """Use different serializers for different actions"""
         if self.action == 'create':
-            return UserRegisterSerializer
+            return UserCreateSerializer
         elif self.action in ['update', 'partial_update']:
             return UserUpdateSerializer
         return UserSerializer
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        """Create user with clinic assignments"""
+        print(f"UserViewSet.create called with data: {request.data}")
         
+        serializer = self.get_serializer(data=request.data)
         try:
+            serializer.is_valid(raise_exception=True)
             user = serializer.save()
-            headers = self.get_success_headers(serializer.data)
+            
+            print(f"User created successfully: {user.email}")
+            print(f"User clinics after creation: {list(user.clinics.all())}")
             
             # Return full user data after creation
-            from .serializers import UserSerializer
             response_serializer = UserSerializer(user)
             return Response(
                 response_serializer.data,
-                status=status.HTTP_201_CREATED,
-                headers=headers
+                status=status.HTTP_201_CREATED
             )
         except Exception as e:
+            print(f"User creation error: {str(e)}")
             return Response(
-                {"detail": str(e)},
+                {"error": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        """Update user with clinic assignments"""
+        print(f"UserViewSet.update called with data: {request.data}")
+        
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            
+            print(f"User updated successfully: {user.email}")
+            print(f"User clinics after update: {list(user.clinics.all())}")
+            
+            # Return full user data after update
+            response_serializer = UserSerializer(user)
+            return Response(response_serializer.data)
+        except Exception as e:
+            print(f"User update error: {str(e)}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['get'], url_path='debug-clinics')
+    def debug_clinics(self, request, pk=None):
+        """Debug endpoint to check user's clinic assignments"""
+        user = self.get_object()
+        
+        clinic_data = []
+        for clinic in user.clinics.all():
+            clinic_data.append({
+                'id': clinic.id,
+                'name': clinic.name,
+                'address': clinic.address
+            })
+        
+        # Also check from the clinic side
+        clinic_assignments = []
+        all_clinics = Clinic.objects.all()
+        for clinic in all_clinics:
+            if user in clinic.staff.all():
+                clinic_assignments.append({
+                    'id': clinic.id,
+                    'name': clinic.name,
+                    'user_in_staff': True
+                })
+        
+        return Response({
+            'user_id': user.id,
+            'user_email': user.email,
+            'user_role': user.role.name if user.role else None,
+            'clinic_count_via_user': user.clinics.count(),
+            'clinics_via_user': clinic_data,
+            'clinic_count_via_clinic': len(clinic_assignments),
+            'clinics_via_clinic': clinic_assignments
+        })
+
     @action(detail=True, methods=['post'], url_path='assign-clinics')
     def assign_clinics(self, request, pk=None):
+        """Assign clinics to a user"""
         user = self.get_object()
         if user.role.name not in ['Doctor', 'Nurse']:
             return Response(
@@ -411,8 +474,16 @@ class UserViewSet(viewsets.ModelViewSet):
                 {"clinic_ids": "One or more clinics don't exist"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Clear existing assignments
+        current_clinics = Clinic.objects.filter(staff=user)
+        for clinic in current_clinics:
+            clinic.staff.remove(user)
             
-        user.clinics.set(clinics)
+        # Add new assignments
+        for clinic in clinics:
+            clinic.staff.add(user)
+            
         return Response(
             {"detail": "Clinics updated successfully"},
             status=status.HTTP_200_OK
@@ -430,7 +501,7 @@ class ClinicViewSet(viewsets.ModelViewSet):
         """Allow read access to authenticated users, write access to admins"""
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated()]
     
     @action(detail=True, methods=['get'])
     def staff(self, request, pk=None):
