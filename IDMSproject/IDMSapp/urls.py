@@ -20,16 +20,21 @@ router.register(r'appointments', AppointmentViewSet)
 router.register(r'emergencies', EmergencyAmbulanceRequestViewSet)
 
 # Medical data
-router.register(r'symptoms', SymptomViewSet)
-router.register(r'diseases', DiseaseViewSet)
-router.register(r'symptom-checks', SymptomCheckerSessionViewSet)
+# router.register(r'symptoms', SymptomViewSet)
+router.register(r'diseases', DiseaseViewSet, basename='disease')
+router.register(r'symptom-sessions', SymptomCheckerSessionViewSet, basename='symptom-session')
+router.register(r'disease-analyses', DiseaseAnalysisViewSet, basename='disease-analysis')
+router.register(r'prevention-tips', PreventionTipViewSet, basename='prevention-tip')
+router.register(r'emergency-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-request')
+router.register(r'symptom-utils', SymptomCheckerUtilityViewSet, basename='symptom-utils')
+router.register(r'provider-symptoms', HealthcareProviderSymptomViewSet, basename='provider-symptoms')
 
 # Alerts and notifications
 router.register(r'alerts', ScreeningAlertViewSet)
 router.register(r'notifications', HealthcareWorkerAlertViewSet)
 
 # Prevention and tips
-router.register(r'prevention-tips', PreventiveTipViewSet)
+# router.register(r'prevention-tips', PreventiveTipViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

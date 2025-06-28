@@ -5,13 +5,15 @@ from rest_framework import filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import BasePermission, AllowAny, IsAuthenticated
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 from rest_framework.authtoken.models import Token  
 from django.conf import settings
 from django.db.models import Q
+from django.db.models import Count
+from collections import Counter
 from django.contrib.auth import authenticate, login, logout
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import *
@@ -605,88 +607,454 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             }
         )
 
-class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet, NotificationMixin):
-    queryset = EmergencyAmbulanceRequest.objects.all()
-    serializer_class = EmergencyAmbulanceRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'suspected_disease']
-
-    def get_queryset(self):
-        if self.request.user.role.name == 'Patient':
-            return self.queryset.filter(patient__user=self.request.user)
-        return self.queryset
-
-    def perform_create(self, serializer):
-        emergency = serializer.save()
-        self._send_email(
-            recipient='emergency-team@yourdomain.com',
-            subject=f"EMERGENCY: {emergency.patient.user.get_full_name()}",
-            template_name="emergency_alert.html",
-            context={
-                'patient': emergency.patient.user.get_full_name(),
-                'location': emergency.location,
-                'condition': emergency.condition_description,
-                'suspected_disease': emergency.suspected_disease
-            }
-        )
-
-# ======================== DISEASE MANAGEMENT VIEWS ========================
-class SymptomViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Symptom.objects.all()
-    serializer_class = SymptomSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['related_diseases']
-
-class DiseaseViewSet(viewsets.ReadOnlyModelViewSet):
+class DiseaseViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing diseases with symptom analysis capabilities
+    """
     queryset = Disease.objects.all()
     serializer_class = DiseaseSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['is_contagious']
-
-class SymptomCheckerSessionViewSet(viewsets.ModelViewSet, NotificationMixin):
-    queryset = SymptomCheckerSession.objects.all()
-    serializer_class = SymptomCheckerSessionSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return self.queryset.filter(user=self.request.user)
-
-    @action(detail=False, methods=['post'])
-    def check_symptoms(self, request):
-        serializer = SymptomCheckRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        """Use different serializers for different actions"""
+        if self.action == 'create':
+            return DiseaseCreateSerializer
+        return DiseaseSerializer
+    
+    def get_permissions(self):
+        """Allow anonymous access for list and retrieve (for symptom checking)"""
+        if self.action in ['list', 'retrieve', 'get_symptoms', 'analyze_symptom']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+    
+    @action(detail=True, methods=['get'])
+    def symptoms(self, request, pk=None):
+        """Get all symptoms for a specific disease"""
+        disease = self.get_object()
+        return Response({
+            'disease': disease.name,
+            'symptoms': disease.common_symptoms,
+            'symptom_weights': disease.symptom_weights,
+            'total_symptoms': len(disease.common_symptoms)
+        })
+    
+    @action(detail=True, methods=['post'])
+    def analyze_symptom(self, request, pk=None):
+        """Analyze given symptoms against this specific disease"""
+        disease = self.get_object()
+        symptoms = request.data.get('symptoms', [])
         
-        symptoms = Symptom.objects.filter(id__in=serializer.validated_data['symptoms'])
-        diseases = Disease.objects.filter(name__in=['Malaria', 'Pneumonia'])
-        
-        session = SymptomCheckerSession.objects.create(
-            user=self.request.user,
-            location=serializer.validated_data.get('location', '')
-        )
-        session.symptoms_selected.set(symptoms)
-        session.possible_diseases.set(diseases)
-        session.risk_score = min(sum(s.severity_score for s in symptoms) * 10, 100)
-        session.recommendation = self._get_recommendation(session.risk_score)
-        session.save()
-        
-        if session.risk_score > 70:
-            self._send_email(
-                recipient=self.request.user.email,
-                subject="Urgent: High Risk Symptoms Detected",
-                template_name="high_risk_alert.html",
-                context={
-                    'user': self.request.user.get_full_name(),
-                    'risk_score': session.risk_score,
-                    'recommendation': session.recommendation
-                }
+        if not symptoms:
+            return Response(
+                {'error': 'No symptoms provided'}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
         
-        return Response(SymptomCheckerSessionSerializer(session).data)
+        score = disease.get_symptom_score(symptoms)
+        severity = disease.get_severity_level(score)
+        recommendation = disease.get_recommendation(score)
+        
+        return Response({
+            'disease': disease.name,
+            'symptoms_analyzed': symptoms,
+            'score': score,
+            'severity_level': severity,
+            'recommendation': recommendation,
+            'thresholds': {
+                'mild': disease.mild_threshold,
+                'moderate': disease.moderate_threshold,
+                'severe': disease.severe_threshold,
+                'emergency': disease.emergency_threshold
+            }
+        })
+    
+    @action(detail=False, methods=['post'])
+    def bulk_create(self, request):
+        """Bulk create diseases with templates"""
+        serializer = BulkDiseaseCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        created_diseases = []
+        
+        if serializer.validated_data['create_defaults']:
+            # Create malaria if it doesn't exist
+            if not Disease.objects.filter(disease_type='malaria').exists():
+                malaria = Disease.create_malaria_disease()
+                created_diseases.append(malaria)
+            
+            # Create pneumonia if it doesn't exist
+            if not Disease.objects.filter(disease_type='pneumonia').exists():
+                pneumonia = Disease.create_pneumonia_disease()
+                created_diseases.append(pneumonia)
+        
+        # Create additional diseases
+        for disease_data in serializer.validated_data['additional_diseases']:
+            disease_serializer = DiseaseCreateSerializer(data=disease_data)
+            disease_serializer.is_valid(raise_exception=True)
+            disease = disease_serializer.save()
+            created_diseases.append(disease)
+        
+        return Response({
+            'created': len(created_diseases),
+            'diseases': DiseaseSerializer(created_diseases, many=True).data
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['get'])
+    def available_symptoms(self, request):
+        """Get all available symptoms across all diseases"""
+        all_symptoms = set()
+        for disease in self.get_queryset():
+            all_symptoms.update(disease.common_symptoms)
+        
+        return Response({
+            'total_unique_symptoms': len(all_symptoms),
+            'symptoms': sorted(list(all_symptoms))
+        })
 
-    def _get_recommendation(self, score):
-        if score > 80: return "Seek emergency care immediately"
-        if score > 50: return "Schedule doctor appointment within 24 hours"
-        return "Self-monitor and consult if symptoms worsen"
+class SymptomCheckerSessionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for symptom checker sessions with analysis capabilities
+    """
+    serializer_class = SymptomCheckerSessionSerializer
+    permission_classes = [AllowAny]  # Allow anonymous symptom checking
+    
+    def get_queryset(self):
+        """Filter sessions by user if authenticated"""
+        if self.request.user.is_authenticated:
+            return SymptomCheckerSession.objects.filter(user=self.request.user)
+        else:
+            # For anonymous users, only return sessions from last 24 hours
+            yesterday = timezone.now() - timezone.timedelta(days=1)
+            return SymptomCheckerSession.objects.filter(
+                user__isnull=True,
+                created_at__gte=yesterday
+            )
+    
+    def perform_create(self, serializer):
+        """Auto-assign user if authenticated and generate session_id"""
+        save_kwargs = {}
+        if self.request.user.is_authenticated:
+            save_kwargs['user'] = self.request.user
+        save_kwargs['session_id'] = str(uuid.uuid4())
+        serializer.save(**save_kwargs)
+    
+    @action(detail=False, methods=['post'])
+    def analyze_symptoms(self, request):
+        """Analyze symptoms and create session with results"""
+        serializer = SymptomAnalysisRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Create session
+        session_data = {
+            'selected_symptoms': serializer.validated_data['selected_symptoms'],
+            'custom_symptoms': serializer.validated_data.get('custom_symptoms', []),
+            'location': serializer.validated_data.get('location', ''),
+            'age_range': serializer.validated_data.get('age_range', ''),
+            'gender': serializer.validated_data.get('gender', ''),
+            'session_id': str(uuid.uuid4())
+        }
+        
+        if request.user.is_authenticated:
+            session_data['user'] = request.user
+        
+        session = SymptomCheckerSession.objects.create(**session_data)
+        
+        # Analyze symptoms
+        session.analyze_symptoms()
+        
+        # Calculate disease analysis probabilities
+        analyses = DiseaseAnalysis.objects.filter(session=session)
+        for analysis in analyses:
+            analysis.calculate_probability()
+        
+        # Prepare response
+        prevention_tips = []
+        if session.primary_suspected_disease:
+            prevention_tips = session.primary_suspected_disease.prevention_tips.filter(
+                category__in=['prevention', 'emergency_signs']
+            )[:3]
+        
+        response_data = {
+            'session_id': session.session_id,
+            'overall_risk_score': session.overall_risk_score,
+            'severity_level': session.severity_level,
+            'recommendation': session.recommendation,
+            'primary_suspected_disease': session.primary_suspected_disease.name if session.primary_suspected_disease else 'Unknown',
+            'disease_analyses': DiseaseAnalysisSerializer(analyses, many=True).data,
+            'needs_followup': session.needs_followup,
+            'followup_date': session.followup_date,
+            'emergency_recommended': session.severity_level == 'critical',
+            'nearest_clinic_recommended': session.severity_level in ['severe', 'critical'],
+            'prevention_tips': PreventionTipSerializer(prevention_tips, many=True).data
+        }
+        
+        response_serializer = SymptomAnalysisResponseSerializer(data=response_data)
+        response_serializer.is_valid()
+        
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def add_symptom(self, request, pk=None):
+        """Add a custom symptom to existing session"""
+        session = self.get_object()
+        symptom = request.data.get('symptom', '').strip()
+        
+        if not symptom:
+            return Response(
+                {'error': 'Symptom cannot be empty'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        session.add_custom_symptom(symptom)
+        session.analyze_symptoms()  # Re-analyze with new symptom
+        
+        return Response({
+            'message': f'Symptom "{symptom}" added successfully',
+            'updated_score': session.overall_risk_score,
+            'updated_severity': session.severity_level,
+            'all_symptoms': session.get_all_symptoms()
+        })
+    
+    @action(detail=True, methods=['post'])
+    def reanalyze(self, request, pk=None):
+        """Re-run analysis for a session"""
+        session = self.get_object()
+        session.analyze_symptoms()
+        
+        return Response({
+            'message': 'Analysis updated successfully',
+            'results': SymptomCheckerSessionSerializer(session).data
+        })
+    
+    @action(detail=True, methods=['post'])
+    def request_emergency(self, request, pk=None):
+        """Create emergency ambulance request from symptom session"""
+        session = self.get_object()
+        
+        if not session.user:
+            return Response(
+                {'error': 'User must be logged in to request emergency services'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if user has patient profile
+        try:
+            patient = Patient.objects.get(user=session.user)
+        except Patient.DoesNotExist:
+            return Response(
+                {'error': 'Patient profile not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Create emergency request
+        emergency_data = {
+            'patient': patient,
+            'location': request.data.get('location', session.location),
+            'gps_coordinates': request.data.get('gps_coordinates', ''),
+            'condition_description': f"Symptom analysis shows {session.severity_level} condition. "
+                                   f"Primary suspected disease: {session.primary_suspected_disease.name if session.primary_suspected_disease else 'Unknown'}. "
+                                   f"Symptoms: {', '.join(session.get_all_symptoms())}",
+            'suspected_disease': session.primary_suspected_disease.name if session.primary_suspected_disease else ''
+        }
+        
+        emergency_request = EmergencyAmbulanceRequest.objects.create(**emergency_data)
+        
+        return Response({
+            'message': 'Emergency request created successfully',
+            'emergency_request_id': emergency_request.id,
+            'request': EmergencyAmbulanceRequestSerializer(emergency_request).data
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """Get symptom checker statistics"""
+        # Base queryset
+        sessions = SymptomCheckerSession.objects.all()
+        
+        # Filter by date range if provided
+        days = int(request.query_params.get('days', 30))
+        start_date = timezone.now() - timezone.timedelta(days=days)
+        sessions = sessions.filter(created_at__gte=start_date)
+        
+        # Calculate statistics
+        total_sessions = sessions.count()
+        
+        # Severity distribution
+        severity_counts = sessions.values('severity_level').annotate(count=Count('id'))
+        sessions_by_severity = {item['severity_level']: item['count'] for item in severity_counts}
+        
+        # Most common symptoms
+        all_symptoms = []
+        for session in sessions:
+            all_symptoms.extend(session.get_all_symptoms())
+        most_common_symptoms = dict(Counter(all_symptoms).most_common(10))
+        
+        # Disease distribution
+        disease_counts = sessions.filter(primary_suspected_disease__isnull=False).values(
+            'primary_suspected_disease__name'
+        ).annotate(count=Count('id'))
+        disease_distribution = {item['primary_suspected_disease__name']: item['count'] for item in disease_counts}
+        
+        # Emergency cases today
+        today = timezone.now().date()
+        emergency_cases_today = sessions.filter(
+            severity_level='critical',
+            created_at__date=today
+        ).count()
+        
+        # Follow-up needed
+        followup_needed = sessions.filter(needs_followup=True).count()
+        
+        stats_data = {
+            'total_sessions': total_sessions,
+            'sessions_by_severity': sessions_by_severity,
+            'most_common_symptoms': most_common_symptoms,
+            'disease_distribution': disease_distribution,
+            'emergency_cases_today': emergency_cases_today,
+            'followup_needed': followup_needed
+        }
+        
+        serializer = SymptomCheckerStatsSerializer(data=stats_data)
+        serializer.is_valid()
+        
+        return Response(serializer.data)
+
+class DiseaseAnalysisViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for disease analysis results
+    """
+    queryset = DiseaseAnalysis.objects.all()
+    serializer_class = DiseaseAnalysisSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        """Filter by session if provided"""
+        queryset = super().get_queryset()
+        session_id = self.request.query_params.get('session_id')
+        if session_id:
+            queryset = queryset.filter(session__session_id=session_id)
+        return queryset.order_by('-calculated_score')
+
+class PreventionTipViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for prevention tips
+    """
+    queryset = PreventionTip.objects.all()
+    serializer_class = PreventionTipSerializer
+    permission_classes = [AllowAny]  # Tips are public information
+    
+    def get_queryset(self):
+        """Filter tips by disease or category"""
+        queryset = super().get_queryset()
+        
+        disease_id = self.request.query_params.get('disease_id')
+        category = self.request.query_params.get('category')
+        disease_type = self.request.query_params.get('disease_type')
+        
+        if disease_id:
+            queryset = queryset.filter(disease_id=disease_id)
+        
+        if category:
+            queryset = queryset.filter(category=category)
+        
+        if disease_type:
+            queryset = queryset.filter(disease__disease_type=disease_type)
+        
+        return queryset.order_by('priority', 'category')
+    
+    @action(detail=False, methods=['get'])
+    def by_disease(self, request):
+        """Get tips grouped by disease"""
+        disease_name = request.query_params.get('disease')
+        if not disease_name:
+            return Response(
+                {'error': 'Disease parameter required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            disease = Disease.objects.get(name__icontains=disease_name)
+            tips = self.get_queryset().filter(disease=disease)
+            
+            # Group by category
+            grouped_tips = {}
+            for tip in tips:
+                if tip.category not in grouped_tips:
+                    grouped_tips[tip.category] = []
+                grouped_tips[tip.category].append(PreventionTipSerializer(tip).data)
+            
+            return Response({
+                'disease': disease.name,
+                'tips_by_category': grouped_tips,
+                'total_tips': tips.count()
+            })
+        
+        except Disease.DoesNotExist:
+            return Response(
+                {'error': f'Disease "{disease_name}" not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
+    """
+    Enhanced ViewSet for emergency ambulance requests with symptom integration
+    """
+    queryset = EmergencyAmbulanceRequest.objects.all()
+    serializer_class = EmergencyAmbulanceRequestSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter by user's patient profile if not staff"""
+        queryset = super().get_queryset()
+        
+        if not self.request.user.is_staff:
+            try:
+                patient = Patient.objects.get(user=self.request.user)
+                queryset = queryset.filter(patient=patient)
+            except Patient.DoesNotExist:
+                return EmergencyAmbulanceRequest.objects.none()
+        
+        return queryset.order_by('-request_time')
+    
+    @action(detail=False, methods=['get'])
+    def by_disease(self, request):
+        """Get emergency requests filtered by suspected disease"""
+        disease = request.query_params.get('disease')
+        if not disease:
+            return Response(
+                {'error': 'Disease parameter required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        requests = self.get_queryset().filter(suspected_disease__icontains=disease)
+        serializer = self.get_serializer(requests, many=True)
+        
+        return Response({
+            'disease': disease,
+            'total_requests': requests.count(),
+            'requests': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def critical_cases(self, request):
+        """Get emergency requests from critical symptom sessions"""
+        # Find sessions with critical severity
+        critical_sessions = SymptomCheckerSession.objects.filter(
+            severity_level='critical',
+            created_at__gte=timezone.now() - timezone.timedelta(days=1)
+        )
+        
+        # Get associated emergency requests
+        critical_requests = self.get_queryset().filter(
+            patient__user__in=[s.user for s in critical_sessions if s.user]
+        )
+        
+        serializer = self.get_serializer(critical_requests, many=True)
+        
+        return Response({
+            'total_critical_sessions': critical_sessions.count(),
+            'critical_requests': serializer.data
+        })
 
 # ======================== ALERT SYSTEM VIEWS ========================
 class ScreeningAlertViewSet(viewsets.ModelViewSet):
@@ -709,184 +1077,628 @@ class HealthcareWorkerAlertViewSet(viewsets.ModelViewSet):
         alert.is_read = True
         alert.save()
         return Response({'status': 'alert acknowledged'})
-
-# ======================== PREVENTION VIEWS ========================
-class PreventiveTipViewSet(viewsets.ModelViewSet):
-    queryset = PreventiveTip.objects.filter(is_active=True)
-    serializer_class = PreventiveTipSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filterset_fields = ['tip_type', 'disease_target', 'priority']
-
+class PreventionTipViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for prevention tips
+    """
+    queryset = PreventionTip.objects.all()
+    serializer_class = PreventionTipSerializer
+    permission_classes = [AllowAny]  # Tips are public information
+    
+    def get_queryset(self):
+        """Filter tips by disease or category"""
+        queryset = super().get_queryset()
+        
+        disease_id = self.request.query_params.get('disease_id')
+        category = self.request.query_params.get('category')
+        disease_type = self.request.query_params.get('disease_type')
+        
+        if disease_id:
+            queryset = queryset.filter(disease_id=disease_id)
+        
+        if category:
+            queryset = queryset.filter(category=category)
+        
+        if disease_type:
+            queryset = queryset.filter(disease__disease_type=disease_type)
+        
+        return queryset.order_by('priority', 'category')
+    
     @action(detail=False, methods=['get'])
-    def for_disease(self, request):
-        disease = request.query_params.get('disease')
-        if not disease:
+    def by_disease(self, request):
+        """Get tips grouped by disease"""
+        disease_name = request.query_params.get('disease')
+        if not disease_name:
             return Response(
-                {'error': 'disease parameter is required'},
+                {'error': 'Disease parameter required'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        tips = self.queryset.filter(
-            Q(disease_target=disease.upper()) | 
-            Q(disease_target='BOTH') |
-            Q(related_symptoms__related_diseases__contains=[disease.lower()])
-        ).distinct()
-        
-        return Response(self.get_serializer(tips, many=True).data)
-
-# ======================== MEDICAL HISTORY VIEWS ========================
-class PatientMedicalHistoryViewSet(viewsets.ReadOnlyModelViewSet):
-    """Consolidated medical history endpoint"""
-    serializer_class = MedicalHistorySerializer  # Use the new serializer
-    permission_classes = [IsPatientOrProvider]
-
-    def get_queryset(self):
-        patient_id = self.kwargs.get('patient_id')
-        return MedicalRecord.objects.filter(
-            patient__id=patient_id
-        ).select_related(
-            'appointment', 
-            'emergency_request',
-            'patient'
-        ).prefetch_related(
-            'related_diseases',
-            'prescriptions'
-        )
-
-    @action(detail=False, methods=['get'])
-    def timeline(self, request, patient_id=None):
-        """Custom timeline view combining multiple record types"""
-        from django.db.models import Subquery, OuterRef
-        from django.db import models
-        
-        # Get all medical records
-        records = MedicalRecord.objects.filter(
-            patient__id=patient_id
-        ).annotate(
-            event_type=models.Value('record', output_field=models.CharField())
-        )
-        
-        # Get all appointments
-        appointments = Appointment.objects.filter(
-            patient__id=patient_id
-        ).annotate(
-            event_type=models.Value('appointment', output_field=models.CharField())
-        )
-        
-        # Get all emergencies
-        emergencies = EmergencyAmbulanceRequest.objects.filter(
-            patient__id=patient_id
-        ).annotate(
-            event_type=models.Value('emergency', output_field=models.CharField())
-        )
-        
-        # Combine and order by date
-        timeline_events = sorted(
-            list(records) + list(appointments) + list(emergencies),
-            key=lambda x: x.date if hasattr(x, 'date') else x.request_time if hasattr(x, 'request_time') else x.appointment_date,
-            reverse=True
-        )
-        
-        serializer = MedicalTimelineSerializer(timeline_events, many=True)
-        return Response(serializer.data)
-
-# ======================== SYSTEM MANAGEMENT VIEWS ========================
-class OutbreakDetectionViewSet(viewsets.ViewSet):
-    permission_classes = [IsAdmin | IsHealthcareWorker]
-
-    @action(detail=False, methods=['get'])
-    def cluster_analysis(self, request):
-        threshold = request.query_params.get('threshold', 5)
-        clusters = self._detect_case_clusters(threshold)
-        return Response(clusters)
-
-    def _detect_case_clusters(self, threshold):
-        recent_cases = SymptomCheckerSession.objects.filter(
-            created_at__gte=timezone.now() - timedelta(days=7),
-            risk_score__gte=70
-        ).values('location', 'gps_coordinates')
-        
-        clusters = []
-        if recent_cases.count() >= threshold:
-            clusters.append({
-                'location': 'High Risk Area',
-                'case_count': recent_cases.count(),
-                'diseases': list(set(Disease.objects.filter(
-                    name__in=['Malaria', 'Pneumonia']
-                ).values_list('name', flat=True)))
-            })
-        return clusters
-
-class ScheduledTasksViewSet(viewsets.ViewSet):
-    permission_classes = [IsAdmin]
-
-    @action(detail=False, methods=['post'])
-    def run_daily_tasks(self, request):
         try:
-            NotificationService.send_appointment_reminders()
+            disease = Disease.objects.get(name__icontains=disease_name)
+            tips = self.get_queryset().filter(disease=disease)
             
-            alerts = OutbreakDetectionViewSet()._detect_case_clusters(threshold=3)
-            if alerts:
-                ScreeningAlert.objects.create(
-                    disease=Disease.objects.get(name='Malaria'),
-                    location=alerts[0]['location'],
-                    severity='H',
-                    cases_reported=alerts[0]['case_count']
-                )
-            
-            archived = MedicalRecord.objects.filter(
-                date__lt=timezone.now() - timedelta(days=365)
-            ).update(is_archived=True)
+            # Group by category
+            grouped_tips = {}
+            for tip in tips:
+                if tip.category not in grouped_tips:
+                    grouped_tips[tip.category] = []
+                grouped_tips[tip.category].append(PreventionTipSerializer(tip).data)
             
             return Response({
-                'reminders_sent': Appointment.objects.filter(reminder_sent=True).count(),
-                'alerts_generated': len(alerts),
-                'records_archived': archived
+                'disease': disease.name,
+                'tips_by_category': grouped_tips,
+                'total_tips': tips.count()
             })
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
-
-class HealthCheckViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.AllowAny]
-
-    @action(detail=False, methods=['get'])
-    def status(self, request):
-        checks = {
-            'database': self._check_database(),
-            'email': self._check_email(),
-            'storage': self._check_storage(),
-            'last_cron': CronJobLog.objects.last().timestamp if CronJobLog.objects.exists() else None
-        }
-        status_code = 200 if all(checks.values()) else 503
-        return Response(checks, status=status_code)
-
-    def _check_database(self):
-        try:
-            User.objects.count()
-            return True
-        except:
-            return False
-
-    def _check_email(self):
-        try:
-            send_mail(
-                subject='Test',
-                message='Test',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[settings.ADMIN_EMAIL],
-                fail_silently=False
+        
+        except Disease.DoesNotExist:
+            return Response(
+                {'error': f'Disease "{disease_name}" not found'}, 
+                status=status.HTTP_404_NOT_FOUND
             )
-            return True
-        except:
-            return False
 
-    def _check_storage(self):
-        try:
-            from django.core.files.storage import default_storage
-            test_file = default_storage.open('test.txt', 'w')
-            test_file.write('test')
-            test_file.close()
-            default_storage.delete('test.txt')
-            return True
-        except:
-            return False
+class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
+    """
+    Enhanced ViewSet for emergency ambulance requests with symptom integration
+    """
+    queryset = EmergencyAmbulanceRequest.objects.all()
+    serializer_class = EmergencyAmbulanceRequestSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter by user's patient profile if not staff"""
+        queryset = super().get_queryset()
+        
+        if not self.request.user.is_staff:
+            try:
+                patient = Patient.objects.get(user=self.request.user)
+                queryset = queryset.filter(patient=patient)
+            except Patient.DoesNotExist:
+                return EmergencyAmbulanceRequest.objects.none()
+        
+        return queryset.order_by('-request_time')
+    
+    @action(detail=False, methods=['get'])
+    def by_disease(self, request):
+        """Get emergency requests filtered by suspected disease"""
+        disease = request.query_params.get('disease')
+        if not disease:
+            return Response(
+                {'error': 'Disease parameter required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        requests = self.get_queryset().filter(suspected_disease__icontains=disease)
+        serializer = self.get_serializer(requests, many=True)
+        
+        return Response({
+            'disease': disease,
+            'total_requests': requests.count(),
+            'requests': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def critical_cases(self, request):
+        """Get emergency requests from critical symptom sessions"""
+        # Find sessions with critical severity
+        critical_sessions = SymptomCheckerSession.objects.filter(
+            severity_level='critical',
+            created_at__gte=timezone.now() - timezone.timedelta(days=1)
+        )
+        
+        # Get associated emergency requests
+        critical_requests = self.get_queryset().filter(
+            patient__user__in=[s.user for s in critical_sessions if s.user]
+        )
+        
+        serializer = self.get_serializer(critical_requests, many=True)
+        
+        return Response({
+            'total_critical_sessions': critical_sessions.count(),
+            'emergency_requests_created': critical_requests.count(),
+            'requests': serializer.data
+        })
+    
+    @action(detail=True, methods=['patch'])
+    def update_status(self, request, pk=None):
+        """Update emergency request status"""
+        emergency_request = self.get_object()
+        new_status = request.data.get('status')
+        
+        if new_status not in dict(EmergencyAmbulanceRequest.STATUS_CHOICES):
+            return Response(
+                {'error': 'Invalid status'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        emergency_request.status = new_status
+        
+        # Update additional fields based on status
+        if new_status == 'D':  # Dispatched
+            emergency_request.assigned_ambulance = request.data.get('assigned_ambulance', '')
+        elif new_status == 'C':  # Completed
+            emergency_request.hospital_destination = request.data.get('hospital_destination', '')
+        
+        emergency_request.save()
+        
+        return Response({
+            'message': f'Status updated to {emergency_request.get_status_display()}',
+            'request': self.get_serializer(emergency_request).data
+        })
+
+# Additional utility views for symptom checker integration
+
+class SymptomCheckerUtilityViewSet(viewsets.ViewSet):
+    """
+    Utility endpoints for symptom checker functionality
+    """
+    permission_classes = [AllowAny]
+    
+    @action(detail=False, methods=['post'])
+    def quick_check(self, request):
+        """Quick symptom check without creating a session"""
+        symptoms = request.data.get('symptoms', [])
+        if not symptoms:
+            return Response(
+                {'error': 'No symptoms provided'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Analyze against all diseases
+        results = []
+        for disease in Disease.objects.all():
+            score = disease.get_symptom_score(symptoms)
+            if score > 0:  # Only include diseases with matching symptoms
+                results.append({
+                    'disease': disease.name,
+                    'disease_type': disease.disease_type,
+                    'score': score,
+                    'severity': disease.get_severity_level(score),
+                    'recommendation': disease.get_recommendation(score)
+                })
+        
+        # Sort by score descending
+        results.sort(key=lambda x: x['score'], reverse=True)
+        
+        return Response({
+            'symptoms_analyzed': symptoms,
+            'total_diseases_checked': Disease.objects.count(),
+            'matching_diseases': len(results),
+            'results': results[:5],  # Top 5 matches
+            'highest_severity': results[0]['severity'] if results else 'mild'
+        })
+    
+    @action(detail=False, methods=['get'])
+    def symptom_library(self, request):
+        """Get organized library of all symptoms"""
+        diseases = Disease.objects.all()
+        symptom_library = {}
+        
+        for disease in diseases:
+            for symptom in disease.common_symptoms:
+                if symptom not in symptom_library:
+                    symptom_library[symptom] = {
+                        'name': symptom,
+                        'diseases': [],
+                        'max_weight': 0,
+                        'category': 'general'
+                    }
+                
+                weight = disease.symptom_weights.get(symptom, 1)
+                symptom_library[symptom]['diseases'].append({
+                    'disease': disease.name,
+                    'type': disease.disease_type,
+                    'weight': weight
+                })
+                symptom_library[symptom]['max_weight'] = max(
+                    symptom_library[symptom]['max_weight'], 
+                    weight
+                )
+        
+        # Categorize symptoms by severity
+        for symptom_data in symptom_library.values():
+            max_weight = symptom_data['max_weight']
+            if max_weight >= 15:
+                symptom_data['category'] = 'critical'
+            elif max_weight >= 10:
+                symptom_data['category'] = 'severe'
+            elif max_weight >= 5:
+                symptom_data['category'] = 'moderate'
+            else:
+                symptom_data['category'] = 'mild'
+        
+        # Group by category
+        categorized = {
+            'critical': [],
+            'severe': [],
+            'moderate': [],
+            'mild': []
+        }
+        
+        for symptom_data in symptom_library.values():
+            categorized[symptom_data['category']].append(symptom_data)
+        
+        return Response({
+            'total_symptoms': len(symptom_library),
+            'symptoms_by_category': categorized,
+            'all_symptoms': sorted(list(symptom_library.keys()))
+        })
+    
+    @action(detail=False, methods=['get'])
+    def disease_comparison(self, request):
+        """Compare symptoms between diseases"""
+        disease_ids = request.query_params.getlist('disease_ids')
+        if len(disease_ids) < 2:
+            return Response(
+                {'error': 'At least 2 disease IDs required for comparison'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        diseases = Disease.objects.filter(id__in=disease_ids)
+        if diseases.count() != len(disease_ids):
+            return Response(
+                {'error': 'One or more disease IDs not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        comparison = {}
+        all_symptoms = set()
+        
+        # Collect all symptoms
+        for disease in diseases:
+            all_symptoms.update(disease.common_symptoms)
+            comparison[disease.name] = {
+                'symptoms': disease.common_symptoms,
+                'weights': disease.symptom_weights,
+                'thresholds': {
+                    'mild': disease.mild_threshold,
+                    'moderate': disease.moderate_threshold,
+                    'severe': disease.severe_threshold,
+                    'emergency': disease.emergency_threshold
+                }
+            }
+        
+        # Find common and unique symptoms
+        disease_symptom_sets = {d.name: set(d.common_symptoms) for d in diseases}
+        common_symptoms = set.intersection(*disease_symptom_sets.values())
+        
+        unique_symptoms = {}
+        for disease_name, symptom_set in disease_symptom_sets.items():
+            unique_symptoms[disease_name] = symptom_set - common_symptoms
+        
+        return Response({
+            'diseases_compared': [d.name for d in diseases],
+            'total_unique_symptoms': len(all_symptoms),
+            'common_symptoms': list(common_symptoms),
+            'unique_symptoms': unique_symptoms,
+            'detailed_comparison': comparison
+        })
+    
+    @action(detail=False, methods=['get'])
+    def risk_assessment_guide(self, request):
+        """Get risk assessment guidelines"""
+        return Response({
+            'severity_levels': {
+                'mild': {
+                    'description': 'Symptoms are manageable and can be monitored at home',
+                    'action': 'Rest, hydration, over-the-counter remedies',
+                    'when_to_escalate': 'If symptoms worsen or persist beyond 48 hours'
+                },
+                'moderate': {
+                    'description': 'Symptoms require medical attention but not urgent',
+                    'action': 'Schedule appointment with healthcare provider within 24-48 hours',
+                    'when_to_escalate': 'If symptoms worsen significantly'
+                },
+                'severe': {
+                    'description': 'Symptoms indicate serious condition requiring prompt care',
+                    'action': 'Seek medical attention today, contact doctor or visit clinic',
+                    'when_to_escalate': 'If any critical symptoms develop'
+                },
+                'critical': {
+                    'description': 'Life-threatening symptoms requiring immediate attention',
+                    'action': 'Call emergency services or go to nearest hospital immediately',
+                    'when_to_escalate': 'This is already the highest level - act immediately'
+                }
+            },
+            'red_flag_symptoms': [
+                'difficulty_breathing',
+                'chest_pain',
+                'confusion',
+                'seizures',
+                'blue_lips_or_fingernails',
+                'severe_chest_pain',
+                'loss_of_consciousness'
+            ],
+            'when_to_call_emergency': [
+                'Severe difficulty breathing',
+                'Chest pain or pressure',
+                'Severe confusion or altered mental state',
+                'Seizures',
+                'Signs of severe dehydration',
+                'High fever with confusion',
+                'Any symptom that feels life-threatening'
+            ]
+        })
+
+# ViewSet for managing symptom checker sessions for healthcare providers
+class HealthcareProviderSymptomViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for healthcare providers to manage and review symptom checker sessions
+    """
+    queryset = SymptomCheckerSession.objects.all()
+    serializer_class = SymptomCheckerSessionSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_permissions(self):
+        """Only healthcare workers and admins can access"""
+        if hasattr(self.request.user, 'role') and self.request.user.role:
+            if self.request.user.role.name in ['Doctor', 'Nurse', 'Admin']:
+                return [IsAuthenticated()]
+        return [IsAuthenticated()]  # Will be denied by get_queryset if not authorized
+    
+    def get_queryset(self):
+        """Filter sessions based on user role and clinic assignments"""
+        user = self.request.user
+        
+        # Admins see all
+        if user.is_staff or (hasattr(user, 'role') and user.role and user.role.name == 'Admin'):
+            return SymptomCheckerSession.objects.all()
+        
+        # Healthcare workers see sessions from their clinics or unassigned
+        if hasattr(user, 'role') and user.role and user.role.name in ['Doctor', 'Nurse']:
+            # Get user's clinics
+            user_clinics = getattr(user, 'clinics', None)
+            if user_clinics and user_clinics.exists():
+                clinic_locations = [clinic.name for clinic in user_clinics.all()]
+                return SymptomCheckerSession.objects.filter(
+                    Q(location__in=clinic_locations) | Q(location='') | Q(user__isnull=True)
+                )
+        
+        # No access for other roles
+        return SymptomCheckerSession.objects.none()
+    
+    @action(detail=False, methods=['get'])
+    def urgent_cases(self, request):
+        """Get urgent cases requiring attention"""
+        urgent_sessions = self.get_queryset().filter(
+            severity_level__in=['severe', 'critical'],
+            needs_followup=True
+        ).order_by('-overall_risk_score', '-created_at')
+        
+        serializer = self.get_serializer(urgent_sessions, many=True)
+        
+        return Response({
+            'total_urgent_cases': urgent_sessions.count(),
+            'critical_cases': urgent_sessions.filter(severity_level='critical').count(),
+            'severe_cases': urgent_sessions.filter(severity_level='severe').count(),
+            'cases': serializer.data
+        })
+    
+    @action(detail=True, methods=['post'])
+    def add_clinical_notes(self, request, pk=None):
+        """Add clinical notes to a symptom session"""
+        session = self.get_object()
+        notes = request.data.get('notes', '')
+        
+        if not notes:
+            return Response(
+                {'error': 'Notes cannot be empty'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Store notes in session (you might want to create a separate ClinicalNotes model)
+        if not hasattr(session, 'clinical_notes'):
+            session.clinical_notes = []
+        
+        clinical_note = {
+            'provider': request.user.get_full_name(),
+            'provider_id': request.user.id,
+            'notes': notes,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        # For this example, we'll store in a JSON field (add to your model if needed)
+        # session.clinical_notes.append(clinical_note)
+        # session.save()
+        
+        return Response({
+            'message': 'Clinical notes added successfully',
+            'note_added': clinical_note
+        })
+    
+    @action(detail=True, methods=['post'])
+    def mark_reviewed(self, request, pk=None):
+        """Mark session as reviewed by healthcare provider"""
+        session = self.get_object()
+        
+        # You might want to add a 'reviewed_by' field to your model
+        # session.reviewed_by = request.user
+        # session.reviewed_at = timezone.now()
+        # session.needs_followup = False
+        # session.save()
+        
+        return Response({
+            'message': 'Session marked as reviewed',
+            'reviewed_by': request.user.get_full_name(),
+            'reviewed_at': timezone.now()
+        })
+# # ======================== PREVENTION VIEWS ========================
+# class PreventiveTipViewSet(viewsets.ModelViewSet):
+#     queryset = PreventiveTip.objects.filter(is_active=True)
+#     serializer_class = PreventiveTipSerializer
+#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+#     filterset_fields = ['tip_type', 'disease_target', 'priority']
+
+#     @action(detail=False, methods=['get'])
+#     def for_disease(self, request):
+#         disease = request.query_params.get('disease')
+#         if not disease:
+#             return Response(
+#                 {'error': 'disease parameter is required'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+        
+#         tips = self.queryset.filter(
+#             Q(disease_target=disease.upper()) | 
+#             Q(disease_target='BOTH') |
+#             Q(related_symptoms__related_diseases__contains=[disease.lower()])
+#         ).distinct()
+        
+#         return Response(self.get_serializer(tips, many=True).data)
+
+# # ======================== MEDICAL HISTORY VIEWS ========================
+# class PatientMedicalHistoryViewSet(viewsets.ReadOnlyModelViewSet):
+#     """Consolidated medical history endpoint"""
+#     serializer_class = MedicalHistorySerializer  # Use the new serializer
+#     permission_classes = [IsPatientOrProvider]
+
+#     def get_queryset(self):
+#         patient_id = self.kwargs.get('patient_id')
+#         return MedicalRecord.objects.filter(
+#             patient__id=patient_id
+#         ).select_related(
+#             'appointment', 
+#             'emergency_request',
+#             'patient'
+#         ).prefetch_related(
+#             'related_diseases',
+#             'prescriptions'
+#         )
+
+#     @action(detail=False, methods=['get'])
+#     def timeline(self, request, patient_id=None):
+#         """Custom timeline view combining multiple record types"""
+#         from django.db.models import Subquery, OuterRef
+#         from django.db import models
+        
+#         # Get all medical records
+#         records = MedicalRecord.objects.filter(
+#             patient__id=patient_id
+#         ).annotate(
+#             event_type=models.Value('record', output_field=models.CharField())
+#         )
+        
+#         # Get all appointments
+#         appointments = Appointment.objects.filter(
+#             patient__id=patient_id
+#         ).annotate(
+#             event_type=models.Value('appointment', output_field=models.CharField())
+#         )
+        
+#         # Get all emergencies
+#         emergencies = EmergencyAmbulanceRequest.objects.filter(
+#             patient__id=patient_id
+#         ).annotate(
+#             event_type=models.Value('emergency', output_field=models.CharField())
+#         )
+        
+#         # Combine and order by date
+#         timeline_events = sorted(
+#             list(records) + list(appointments) + list(emergencies),
+#             key=lambda x: x.date if hasattr(x, 'date') else x.request_time if hasattr(x, 'request_time') else x.appointment_date,
+#             reverse=True
+#         )
+        
+#         serializer = MedicalTimelineSerializer(timeline_events, many=True)
+#         return Response(serializer.data)
+
+# # ======================== SYSTEM MANAGEMENT VIEWS ========================
+# class OutbreakDetectionViewSet(viewsets.ViewSet):
+#     permission_classes = [IsAdmin | IsHealthcareWorker]
+
+#     @action(detail=False, methods=['get'])
+#     def cluster_analysis(self, request):
+#         threshold = request.query_params.get('threshold', 5)
+#         clusters = self._detect_case_clusters(threshold)
+#         return Response(clusters)
+
+#     def _detect_case_clusters(self, threshold):
+#         recent_cases = SymptomCheckerSession.objects.filter(
+#             created_at__gte=timezone.now() - timedelta(days=7),
+#             risk_score__gte=70
+#         ).values('location', 'gps_coordinates')
+        
+#         clusters = []
+#         if recent_cases.count() >= threshold:
+#             clusters.append({
+#                 'location': 'High Risk Area',
+#                 'case_count': recent_cases.count(),
+#                 'diseases': list(set(Disease.objects.filter(
+#                     name__in=['Malaria', 'Pneumonia']
+#                 ).values_list('name', flat=True)))
+#             })
+#         return clusters
+
+# class ScheduledTasksViewSet(viewsets.ViewSet):
+#     permission_classes = [IsAdmin]
+
+#     @action(detail=False, methods=['post'])
+#     def run_daily_tasks(self, request):
+#         try:
+#             NotificationService.send_appointment_reminders()
+            
+#             alerts = OutbreakDetectionViewSet()._detect_case_clusters(threshold=3)
+#             if alerts:
+#                 ScreeningAlert.objects.create(
+#                     disease=Disease.objects.get(name='Malaria'),
+#                     location=alerts[0]['location'],
+#                     severity='H',
+#                     cases_reported=alerts[0]['case_count']
+#                 )
+            
+#             archived = MedicalRecord.objects.filter(
+#                 date__lt=timezone.now() - timedelta(days=365)
+#             ).update(is_archived=True)
+            
+#             return Response({
+#                 'reminders_sent': Appointment.objects.filter(reminder_sent=True).count(),
+#                 'alerts_generated': len(alerts),
+#                 'records_archived': archived
+#             })
+#         except Exception as e:
+#             return Response({'error': str(e)}, status=500)
+
+# class HealthCheckViewSet(viewsets.ViewSet):
+#     permission_classes = [permissions.AllowAny]
+
+#     @action(detail=False, methods=['get'])
+#     def status(self, request):
+#         checks = {
+#             'database': self._check_database(),
+#             'email': self._check_email(),
+#             'storage': self._check_storage(),
+#             'last_cron': CronJobLog.objects.last().timestamp if CronJobLog.objects.exists() else None
+#         }
+#         status_code = 200 if all(checks.values()) else 503
+#         return Response(checks, status=status_code)
+
+#     def _check_database(self):
+#         try:
+#             User.objects.count()
+#             return True
+#         except:
+#             return False
+
+#     def _check_email(self):
+#         try:
+#             send_mail(
+#                 subject='Test',
+#                 message='Test',
+#                 from_email=settings.DEFAULT_FROM_EMAIL,
+#                 recipient_list=[settings.ADMIN_EMAIL],
+#                 fail_silently=False
+#             )
+#             return True
+#         except:
+#             return False
+
+#     def _check_storage(self):
+#         try:
+#             from django.core.files.storage import default_storage
+#             test_file = default_storage.open('test.txt', 'w')
+#             test_file.write('test')
+#             test_file.close()
+#             default_storage.delete('test.txt')
+#             return True
+#         except:
+#             return False
