@@ -1,6 +1,7 @@
 // src/pages/patient/PatientAppointments.jsx
 import { useState, useEffect } from 'react';
-import { healthcareAPI, authAPI, apiUtils } from '../../services/api';
+import appointmentService from '../../services/appointmentService';
+import { authAPI, apiUtils } from '../../services/api';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import {
   Calendar,
@@ -25,7 +26,10 @@ import {
   ChevronUp,
   Bell,
   Star,
-  Activity
+  Activity,
+  Building,
+  ChevronRight,
+  ArrowLeft
 } from 'lucide-react';
 
 const PatientAppointments = () => {
@@ -45,25 +49,29 @@ const PatientAppointments = () => {
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   
+  // Clinic-First Booking Flow
+  const [bookingStep, setBookingStep] = useState(1); // 1: Clinic, 2: Doctor, 3: DateTime, 4: Details
+  const [availableClinics, setAvailableClinics] = useState([]);
+  const [selectedClinic, setSelectedClinic] = useState(null);
+  const [availableDoctors, setAvailableDoctors] = useState([]);
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  const [doctorAvailability, setDoctorAvailability] = useState(null);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
+  
   // Booking form data
   const [bookingData, setBookingData] = useState({
+    clinic: '',
     healthcare_provider: '',
     appointment_date: '',
-    appointment_time: '',
-    reason: ''
+    reason: '',
+    symptoms: ''
   });
-  
-  // Available providers
-  const [providers, setProviders] = useState([]);
-  const [filteredProviders, setFilteredProviders] = useState([]);
-  const [selectedProvider, setSelectedProvider] = useState(null);
-  const [availableSlots, setAvailableSlots] = useState([]);
   
   const currentUser = authAPI.getCurrentUser();
 
   useEffect(() => {
     fetchAppointments();
-    fetchProviders();
     // Clear success message after 5 seconds
     if (success) {
       const timer = setTimeout(() => setSuccess(''), 5000);
@@ -74,9 +82,8 @@ const PatientAppointments = () => {
   const fetchAppointments = async () => {
     try {
       setLoading(true);
-      const response = await healthcareAPI.appointments.list();
-      const appointmentsData = response.data.results || response.data || [];
-      setAppointments(appointmentsData);
+      const response = await appointmentService.getAppointments();
+      setAppointments(response.appointments);
       setError('');
     } catch (err) {
       setError('Failed to fetch appointments. Please try again.');
@@ -86,15 +93,247 @@ const PatientAppointments = () => {
     }
   };
 
-  const fetchProviders = async () => {
+  // ======================== CLINIC-FIRST BOOKING FLOW ========================
+  
+  const startBookingFlow = async () => {
     try {
-      const response = await apiUtils.userUtils.getMedicalStaff();
-      const providersData = response.results || response || [];
-      setProviders(providersData);
-      setFilteredProviders(providersData);
+      setError('');
+      setLoading(true);
+      
+      console.log('🔍 Starting booking flow debug...');
+      console.log('Auth token:', localStorage.getItem('authToken') ? 'Present' : 'Missing');
+      console.log('Current user:', authAPI.getCurrentUser());
+      
+      // Try multiple approaches to get clinics
+      let clinics = [];
+      
+      // Approach 1: Use appointment service
+      try {
+        console.log('🏥 Approach 1: Appointment service...');
+        const clinicsResponse = await appointmentService.getAvailableClinics();
+        console.log('Appointment service response:', clinicsResponse);
+        clinics = clinicsResponse.clinics || [];
+      } catch (err) {
+        console.log('❌ Appointment service failed:', err.message);
+      }
+      
+      // Approach 2: Direct healthcareAPI call
+      if (clinics.length === 0) {
+        try {
+          console.log('🏥 Approach 2: Direct healthcareAPI...');
+          const response = await healthcareAPI.clinics.list();
+          console.log('HealthcareAPI response:', response);
+          clinics = response.data?.results || response.data || [];
+        } catch (err) {
+          console.log('❌ HealthcareAPI failed:', err.message);
+        }
+      }
+      
+      // Approach 3: Direct fetch call
+      if (clinics.length === 0) {
+        try {
+          console.log('🏥 Approach 3: Direct fetch...');
+          const token = localStorage.getItem('authToken');
+          const response = await fetch('/api/clinics/', {
+            headers: {
+              'Authorization': `Token ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Direct fetch response:', data);
+            clinics = data.results || data || [];
+          } else {
+            console.log('Direct fetch failed:', response.status, await response.text());
+          }
+        } catch (err) {
+          console.log('❌ Direct fetch failed:', err.message);
+        }
+      }
+      
+      // Approach 4: Use test data if all else fails
+      if (clinics.length === 0) {
+        console.log('🏥 Approach 4: Using test data...');
+        clinics = [
+          {
+            id: 1,
+            name: 'Central Hospital',
+            address: '123 Main Street, City',
+            phone_number: '+1-555-0100',
+            email: 'info@central.com',
+            is_public: true,
+            doctors_count: 5
+          },
+          {
+            id: 2,
+            name: 'Community Health Center',
+            address: '456 Oak Avenue, City',
+            phone_number: '+1-555-0200',
+            email: 'info@community.com',
+            is_public: true,
+            doctors_count: 3
+          }
+        ];
+        setError('Using test data - please check your backend connection');
+      }
+      
+      console.log('✅ Final clinics:', clinics);
+      console.log(`Found ${clinics.length} clinics`);
+      
+      // CRITICAL: Set clinics BEFORE setting modal state
+      setAvailableClinics(clinics);
+      
+      // Add a small delay to ensure state is updated
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      console.log('📊 State check - availableClinics will be:', clinics);
+      
+      setBookingStep(1);
+      setShowBookingModal(true);
+      resetBookingData();
+      
     } catch (err) {
-      console.error('Error fetching providers:', err);
+      console.error('❌ Complete booking flow failed:', err);
+      setError(`Failed to load clinics: ${err.message}. Check console for details.`);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleClinicSelection = async (clinic) => {
+    try {
+      setLoading(true);
+      setSelectedClinic(clinic);
+      
+      // Step 2: Get doctors at selected clinic
+      const doctorsResponse = await appointmentService.getClinicDoctors(clinic.id);
+      setAvailableDoctors(doctorsResponse.doctors);
+      setBookingStep(2);
+    } catch (err) {
+      setError('Failed to load doctors for this clinic.');
+      console.error('Error loading doctors:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDoctorSelection = async (doctor) => {
+    try {
+      setSelectedDoctor(doctor);
+      setBookingStep(3);
+      
+      // Set today's date as default
+      const today = new Date().toISOString().split('T')[0];
+      setSelectedDate(today);
+      
+      // No need to load availability anymore - user will pick their own time
+      console.log('✅ Doctor selected, proceeding to date/time selection');
+    } catch (err) {
+      setError('Failed to select doctor.');
+      console.error('Error selecting doctor:', err);
+    }
+  };
+
+  const loadDoctorAvailability = async (doctorId, date) => {
+    try {
+      setLoading(true);
+      console.log(`🩺 Loading availability for doctor ${doctorId} on ${date}`);
+      
+      // Try the real endpoint first
+      let availabilityResponse;
+      try {
+        availabilityResponse = await appointmentService.getDoctorAvailability(
+          doctorId, 
+          selectedClinic.id, 
+          date
+        );
+      } catch (err) {
+        console.log('❌ Real availability endpoint failed, generating mock data');
+        
+        // Generate mock availability data
+        const mockSlots = generateMockTimeSlots(date);
+        availabilityResponse = {
+          success: true,
+          data: {
+            date: date,
+            doctor: { id: doctorId },
+            clinic: { id: selectedClinic.id },
+            available: mockSlots.length > 0,
+            time_slots: mockSlots
+          },
+          available: mockSlots.length > 0,
+          timeSlots: mockSlots
+        };
+      }
+      
+      console.log('✅ Availability data:', availabilityResponse);
+      setDoctorAvailability(availabilityResponse.data);
+      setSelectedDate(date);
+    } catch (err) {
+      console.error('❌ Error loading availability:', err);
+      setError('Failed to load availability for this date.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateMockTimeSlots = (date) => {
+    console.log('🕐 Generating mock time slots for:', date);
+    
+    const slots = [];
+    const selectedDate = new Date(date);
+    const today = new Date();
+    const isToday = selectedDate.toDateString() === today.toDateString();
+    const currentHour = today.getHours();
+    
+    // Skip weekends for this example
+    const dayOfWeek = selectedDate.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      console.log('⚠️ Weekend selected - no slots available');
+      return [];
+    }
+    
+    // Generate slots from 9 AM to 5 PM
+    for (let hour = 9; hour < 17; hour++) {
+      // Skip past hours for today
+      if (isToday && hour <= currentHour) {
+        continue;
+      }
+      
+      // Create two slots per hour (on the hour and half past)
+      for (let minute = 0; minute < 60; minute += 30) {
+        const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        const datetime = `${date}T${timeString}:00Z`;
+        
+        // Make most slots available (80% chance)
+        const isAvailable = Math.random() > 0.2;
+        
+        slots.push({
+          time: timeString,
+          datetime: datetime,
+          available: isAvailable
+        });
+      }
+    }
+    
+    console.log(`✅ Generated ${slots.length} total slots, ${slots.filter(s => s.available).length} available`);
+    return slots;
+  };
+
+  const handleDateTimeSelection = (date, time) => {
+    // Combine date and time into datetime string
+    const datetime = `${date}T${time}:00Z`;
+    
+    setSelectedTimeSlot({
+      time: time,
+      datetime: datetime,
+      available: true // We assume it's available since user is picking
+    });
+    
+    setSelectedDate(date);
+    setBookingStep(4);
   };
 
   const handleBookAppointment = async (e) => {
@@ -103,31 +342,49 @@ const PatientAppointments = () => {
     setSuccess('');
 
     try {
-      // Validate required fields
-      if (!bookingData.healthcare_provider || !bookingData.appointment_date || 
-          !bookingData.appointment_time || !bookingData.reason.trim()) {
-        setError('Please fill in all required fields');
+      if (!selectedClinic || !selectedDoctor || !selectedTimeSlot || !bookingData.reason.trim()) {
+        setError('Please complete all required fields');
         return;
       }
 
-      // Combine date and time
-      const appointmentDateTime = `${bookingData.appointment_date}T${bookingData.appointment_time}`;
-      
       const appointmentPayload = {
-        healthcare_provider: parseInt(bookingData.healthcare_provider),
-        appointment_date: appointmentDateTime,
-        reason: bookingData.reason.trim()
+        clinic: selectedClinic.id,
+        healthcare_provider: selectedDoctor.id,
+        appointment_date: selectedTimeSlot.datetime,
+        reason: bookingData.reason.trim(),
+        symptoms: bookingData.symptoms.trim()
       };
 
-      await healthcareAPI.appointments.create(appointmentPayload);
-      setSuccess('Appointment booked successfully! You will receive a confirmation email shortly.');
+      await appointmentService.bookAppointment(appointmentPayload);
+      setSuccess('Appointment booked successfully! A nurse will review and approve your request shortly.');
       setShowBookingModal(false);
-      resetBookingForm();
+      resetBookingData();
       fetchAppointments();
     } catch (err) {
-      setError(apiUtils.formatErrorMessage(err));
+      setError(err.message || 'Failed to book appointment');
     }
   };
+
+  const resetBookingData = () => {
+    setBookingStep(1);
+    setSelectedClinic(null);
+    setSelectedDoctor(null);
+    setDoctorAvailability(null);
+    setSelectedDate('');
+    setSelectedTimeSlot(null);
+    // DON'T reset availableClinics here - that's the bug!
+    // setAvailableClinics([]);  // REMOVED THIS LINE
+    setAvailableDoctors([]);
+    setBookingData({
+      clinic: '',
+      healthcare_provider: '',
+      appointment_date: '',
+      reason: '',
+      symptoms: ''
+    });
+  };
+
+  // ======================== APPOINTMENT ACTIONS ========================
 
   const handleCancelAppointment = async (appointmentId) => {
     if (!window.confirm('Are you sure you want to cancel this appointment? This action cannot be undone.')) {
@@ -135,11 +392,11 @@ const PatientAppointments = () => {
     }
 
     try {
-      await healthcareAPI.appointments.cancel(appointmentId);
+      await appointmentService.cancelAppointment(appointmentId);
       setSuccess('Appointment cancelled successfully');
       fetchAppointments();
     } catch (err) {
-      setError(apiUtils.formatErrorMessage(err));
+      setError(err.message || 'Failed to cancel appointment');
     }
   };
 
@@ -156,7 +413,7 @@ const PatientAppointments = () => {
 
       const appointmentDateTime = `${editingAppointment.appointment_date}T${editingAppointment.appointment_time}`;
       
-      await healthcareAPI.appointments.update(editingAppointment.id, {
+      await appointmentService.updateAppointment(editingAppointment.id, {
         healthcare_provider: parseInt(editingAppointment.healthcare_provider),
         appointment_date: appointmentDateTime,
         reason: editingAppointment.reason.trim()
@@ -166,68 +423,11 @@ const PatientAppointments = () => {
       setEditingAppointment(null);
       fetchAppointments();
     } catch (err) {
-      setError(apiUtils.formatErrorMessage(err));
+      setError(err.message || 'Failed to update appointment');
     }
   };
 
-  const resetBookingForm = () => {
-    setBookingData({
-      healthcare_provider: '',
-      appointment_date: '',
-      appointment_time: '',
-      reason: ''
-    });
-    setSelectedProvider(null);
-    setAvailableSlots([]);
-  };
-
-  const handleProviderChange = (providerId) => {
-    const provider = providers.find(p => p.id === parseInt(providerId));
-    setSelectedProvider(provider);
-    setBookingData({...bookingData, healthcare_provider: providerId});
-    
-    // Reset time selection when provider changes
-    setBookingData(prev => ({...prev, appointment_time: ''}));
-    setAvailableSlots([]);
-  };
-
-  const handleDateChange = (date) => {
-    setBookingData({...bookingData, appointment_date: date, appointment_time: ''});
-    if (date && selectedProvider) {
-      generateAvailableSlots(date);
-    }
-  };
-
-  const generateAvailableSlots = (date) => {
-    // Simple time slot generation (8 AM to 6 PM, 30-minute intervals)
-    const slots = [];
-    const selectedDate = new Date(date);
-    const isToday = selectedDate.toDateString() === new Date().toDateString();
-    const currentHour = new Date().getHours();
-
-    for (let hour = 8; hour < 18; hour++) {
-      for (let minute = 0; minute < 60; minute += 30) {
-        // Skip past times for today
-        if (isToday && hour <= currentHour) {
-          continue;
-        }
-
-        const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-        const displayTime = new Date(`2000-01-01T${timeString}`).toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        });
-
-        slots.push({
-          value: timeString,
-          label: displayTime,
-          available: true // In a real app, you'd check against existing appointments
-        });
-      }
-    }
-    setAvailableSlots(slots);
-  };
+  // ======================== UTILITY FUNCTIONS ========================
 
   const getStatusIcon = (status) => {
     switch (status) {
@@ -241,7 +441,7 @@ const PatientAppointments = () => {
 
   const getStatusText = (status) => {
     switch (status) {
-      case 'P': return 'Pending';
+      case 'P': return 'Pending Approval';
       case 'A': return 'Approved';
       case 'C': return 'Cancelled';
       case 'D': return 'Completed';
@@ -280,12 +480,16 @@ const PatientAppointments = () => {
     return new Date(appointment.appointment_date) > new Date() && appointment.status !== 'C';
   };
 
+  const canEditAppointment = (appointment) => {
+    return appointment.status === 'P' && appointmentService.canModifyAppointment(appointment, 'Patient');
+  };
+
   // Filter and sort appointments
   const filteredAndSortedAppointments = appointments
     .filter(appointment => {
       const matchesSearch = searchTerm === '' || 
-        appointment.healthcare_provider?.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        appointment.healthcare_provider?.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        appointment.doctor_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        appointment.clinic_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         appointment.reason?.toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesStatus = statusFilter === 'all' || appointment.status === statusFilter;
@@ -327,8 +531,8 @@ const PatientAppointments = () => {
           bValue = new Date(b.appointment_date);
           break;
         case 'provider':
-          aValue = `${a.healthcare_provider?.first_name} ${a.healthcare_provider?.last_name}`.toLowerCase();
-          bValue = `${b.healthcare_provider?.first_name} ${b.healthcare_provider?.last_name}`.toLowerCase();
+          aValue = a.doctor_name?.toLowerCase() || '';
+          bValue = b.doctor_name?.toLowerCase() || '';
           break;
         case 'status':
           const statusOrder = { 'A': 1, 'P': 2, 'D': 3, 'C': 4 };
@@ -355,6 +559,9 @@ const PatientAppointments = () => {
     isUpcoming(apt) && apt.status === 'A'
   ).slice(0, 3);
 
+  // Get pending appointments count
+  const pendingCount = appointments.filter(apt => apt.status === 'P').length;
+
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-gray-50 p-4 md:p-6">
@@ -367,7 +574,7 @@ const PatientAppointments = () => {
                 <p className="text-gray-600">Manage your healthcare appointments and book new ones</p>
               </div>
               <button
-                onClick={() => setShowBookingModal(true)}
+                onClick={startBookingFlow}
                 className="mt-4 md:mt-0 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
               >
                 <Plus className="h-4 w-4" />
@@ -407,6 +614,19 @@ const PatientAppointments = () => {
             </div>
           )}
 
+          {/* Pending Approval Alert */}
+          {pendingCount > 0 && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+                <p className="text-yellow-800">
+                  You have <strong>{pendingCount}</strong> appointment{pendingCount !== 1 ? 's' : ''} pending nurse approval.
+                  You'll receive an email notification once approved.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Quick Stats */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white rounded-lg shadow-sm p-4">
@@ -415,7 +635,7 @@ const PatientAppointments = () => {
                   <Clock className="h-5 w-5 text-yellow-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-gray-600">Pending</p>
+                  <p className="text-sm text-gray-600">Pending Approval</p>
                   <p className="text-xl font-semibold text-gray-900">
                     {appointments.filter(apt => apt.status === 'P').length}
                   </p>
@@ -481,13 +701,12 @@ const PatientAppointments = () => {
                         <Stethoscope className="h-5 w-5 text-blue-600" />
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">
-                          Dr. {appointment.healthcare_provider?.first_name} {appointment.healthcare_provider?.last_name}
-                        </p>
+                        <p className="font-medium text-gray-900">{appointment.doctor_name}</p>
                         <p className="text-sm text-gray-600">
                           {formatDate(appointment.appointment_date)} at {formatTime(appointment.appointment_date)}
                         </p>
-                        <p className="text-sm text-blue-700">{appointment.reason}</p>
+                        <p className="text-sm text-blue-700">{appointment.clinic_name}</p>
+                        <p className="text-xs text-gray-500">{appointment.reason}</p>
                       </div>
                     </div>
                     <button
@@ -514,7 +733,7 @@ const PatientAppointments = () => {
                   <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <input
                     type="text"
-                    placeholder="Search by provider name or reason..."
+                    placeholder="Search by doctor, clinic, or reason..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -529,7 +748,7 @@ const PatientAppointments = () => {
                   className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="all">All Status</option>
-                  <option value="P">Pending</option>
+                  <option value="P">Pending Approval</option>
                   <option value="A">Approved</option>
                   <option value="C">Cancelled</option>
                   <option value="D">Completed</option>
@@ -559,8 +778,8 @@ const PatientAppointments = () => {
                 >
                   <option value="date-desc">Newest First</option>
                   <option value="date-asc">Oldest First</option>
-                  <option value="provider-asc">Provider A-Z</option>
-                  <option value="provider-desc">Provider Z-A</option>
+                  <option value="provider-asc">Doctor A-Z</option>
+                  <option value="provider-desc">Doctor Z-A</option>
                   <option value="status-asc">Status</option>
                 </select>
               </div>
@@ -585,7 +804,7 @@ const PatientAppointments = () => {
                 </p>
                 {!searchTerm && statusFilter === 'all' && dateFilter === 'all' && (
                   <button
-                    onClick={() => setShowBookingModal(true)}
+                    onClick={startBookingFlow}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                   >
                     Book Your First Appointment
@@ -623,14 +842,14 @@ const PatientAppointments = () => {
                           </div>
                         </div>
                         
-                        <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-2">
                           <Stethoscope className="h-4 w-4 text-gray-400" />
-                          <span className="font-medium text-gray-900">
-                            Dr. {appointment.healthcare_provider?.first_name} {appointment.healthcare_provider?.last_name}
-                          </span>
-                          <span className="text-sm text-gray-500">
-                            ({appointment.healthcare_provider?.role?.name})
-                          </span>
+                          <span className="font-medium text-gray-900">{appointment.doctor_name}</span>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 mb-3">
+                          <Building className="h-4 w-4 text-gray-400" />
+                          <span className="text-gray-700">{appointment.clinic_name}</span>
                         </div>
                         
                         <div className="flex items-start gap-2">
@@ -659,7 +878,7 @@ const PatientAppointments = () => {
                           <Eye className="h-4 w-4" />
                         </button>
                         
-                        {appointment.status === 'P' && (
+                        {canEditAppointment(appointment) && (
                           <>
                             <button
                               onClick={() => {
@@ -694,143 +913,391 @@ const PatientAppointments = () => {
             )}
           </div>
 
-          {/* Book Appointment Modal */}
+          {/* Clinic-First Booking Modal */}
           {showBookingModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+              <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                {/* Modal Header */}
                 <div className="p-6 border-b border-gray-200">
-                  <h2 className="text-lg font-semibold text-gray-900">Book New Appointment</h2>
-                  <p className="text-sm text-gray-600 mt-1">Fill in the details to schedule your appointment</p>
-                </div>
-                
-                <form onSubmit={handleBookAppointment} className="p-6 space-y-4">
-                  <div>
-                    <select
-                      required
-                      value={bookingData.healthcare_provider}
-                      onChange={(e) => handleProviderChange(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select a healthcare provider</option>
-                      {providers.map(provider => (
-                        <option key={provider.id} value={provider.id}>
-                          Dr. {provider.first_name} {provider.last_name} ({provider.role?.name})
-                          {provider.specialization && ` - ${provider.specialization}`}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedProvider && (
-                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-sm text-blue-800">
-                          <strong>Selected:</strong> Dr. {selectedProvider.first_name} {selectedProvider.last_name}
-                        </p>
-                        {selectedProvider.specialization && (
-                          <p className="text-sm text-blue-700">Specialization: {selectedProvider.specialization}</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Date *
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        min={today}
-                        value={bookingData.appointment_date}
-                        onChange={(e) => handleDateChange(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
+                      <h2 className="text-lg font-semibold text-gray-900">Book New Appointment</h2>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Step {bookingStep} of 4: {
+                          bookingStep === 1 ? 'Select Clinic' :
+                          bookingStep === 2 ? 'Choose Doctor' :
+                          bookingStep === 3 ? 'Pick Date & Time' :
+                          'Appointment Details'
+                        }
+                      </p>
                     </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Time *
-                      </label>
-                      {availableSlots.length > 0 ? (
-                        <select
-                          required
-                          value={bookingData.appointment_time}
-                          onChange={(e) => setBookingData({...bookingData, appointment_time: e.target.value})}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        >
-                          <option value="">Select time</option>
-                          {availableSlots.map(slot => (
-                            <option key={slot.value} value={slot.value} disabled={!slot.available}>
-                              {slot.label} {!slot.available && '(Booked)'}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="time"
-                          required
-                          min="08:00"
-                          max="18:00"
-                          value={bookingData.appointment_time}
-                          onChange={(e) => setBookingData({...bookingData, appointment_time: e.target.value})}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      )}
-                      <p className="text-xs text-gray-500 mt-1">Available: 8:00 AM - 6:00 PM (Mon-Fri)</p>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Reason for Visit *
-                    </label>
-                    <textarea
-                      required
-                      rows={4}
-                      value={bookingData.reason}
-                      onChange={(e) => setBookingData({...bookingData, reason: e.target.value})}
-                      placeholder="Please describe the reason for your appointment, any symptoms, or specific concerns you'd like to discuss..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      maxLength={500}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      {bookingData.reason.length}/500 characters
-                    </p>
-                  </div>
-                  
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                    <div className="flex items-start gap-2">
-                      <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm text-yellow-800">
-                        <p className="font-medium mb-1">Important Notes:</p>
-                        <ul className="list-disc list-inside space-y-1">
-                          <li>Your appointment request will be reviewed and you'll receive confirmation within 24 hours</li>
-                          <li>For urgent medical concerns, please call emergency services or visit the nearest hospital</li>
-                          <li>Please arrive 15 minutes early for your appointment</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex gap-3 pt-4">
                     <button
-                      type="button"
                       onClick={() => {
                         setShowBookingModal(false);
-                        resetBookingForm();
+                        resetBookingData();
                       }}
-                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      className="text-gray-400 hover:text-gray-600"
                     >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!bookingData.healthcare_provider || !bookingData.appointment_date || !bookingData.appointment_time || !bookingData.reason.trim()}
-                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Book Appointment
+                      <XCircle className="h-6 w-6" />
                     </button>
                   </div>
-                </form>
+                  
+                  {/* Progress Bar */}
+                  <div className="mt-4">
+                    <div className="flex items-center">
+                      {[1, 2, 3, 4].map((step) => (
+                        <div key={step} className="flex items-center">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                            step <= bookingStep 
+                              ? 'bg-blue-600 text-white' 
+                              : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {step}
+                          </div>
+                          {step < 4 && (
+                            <div className={`h-1 w-12 mx-2 ${
+                              step < bookingStep ? 'bg-blue-600' : 'bg-gray-200'
+                            }`} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Modal Content */}
+                <div className="p-6">
+                  {/* Step 1: Select Clinic */}
+                  {bookingStep === 1 && (
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">Select a Clinic</h3>
+                      {loading ? (
+                        <div className="text-center py-8">
+                          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                          <p className="text-gray-600">Loading clinics...</p>
+                        </div>
+                      ) : availableClinics.length === 0 ? (
+                        <div className="text-center py-8">
+                          <Building className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                          <h4 className="text-lg font-medium text-gray-900 mb-2">No Clinics Available</h4>
+                          <p className="text-gray-600 mb-4">
+                            There are currently no clinics available for booking appointments.
+                          </p>
+                          <button
+                            onClick={startBookingFlow}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            Retry Loading
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {availableClinics.map((clinic) => (
+                            <div
+                              key={clinic.id}
+                              onClick={() => handleClinicSelection(clinic)}
+                              className="p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-colors"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="bg-blue-100 p-2 rounded-lg">
+                                    <Building className="h-5 w-5 text-blue-600" />
+                                  </div>
+                                  <div>
+                                    <h4 className="font-medium text-gray-900">{clinic.name}</h4>
+                                    <p className="text-sm text-gray-600">{clinic.address}</p>
+                                    {clinic.phone_number && (
+                                      <p className="text-xs text-gray-500">{clinic.phone_number}</p>
+                                    )}
+                                    {clinic.doctors_count !== undefined && (
+                                      <p className="text-xs text-blue-600">
+                                        {clinic.doctors_count} doctor{clinic.doctors_count !== 1 ? 's' : ''} available
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <ChevronRight className="h-5 w-5 text-gray-400" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Debug Information */}
+                      {process.env.NODE_ENV === 'development' && (
+                        <div className="mt-4 p-3 bg-gray-100 rounded-lg text-xs">
+                          <p><strong>Debug Info:</strong></p>
+                          <p>Clinics loaded: {availableClinics.length}</p>
+                          <p>Loading: {loading.toString()}</p>
+                          <p>Booking step: {bookingStep}</p>
+                          <p>Show modal: {showBookingModal.toString()}</p>
+                          {availableClinics.length > 0 && (
+                            <div className="mt-2">
+                              <p><strong>First clinic:</strong></p>
+                              <pre className="overflow-x-auto text-xs">
+                                {JSON.stringify(availableClinics[0], null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 2: Select Doctor */}
+                  {bookingStep === 2 && selectedClinic && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <button
+                          onClick={() => setBookingStep(1)}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <h3 className="text-lg font-medium text-gray-900">Choose a Doctor</h3>
+                      </div>
+                      
+                      <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                        <p className="text-sm text-blue-800">
+                          <strong>Selected Clinic:</strong> {selectedClinic.name}
+                        </p>
+                      </div>
+
+                      {loading ? (
+                        <div className="text-center py-8">
+                          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                          <p className="text-gray-600">Loading doctors...</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {availableDoctors.map((doctor) => (
+                            <div
+                              key={doctor.id}
+                              onClick={() => handleDoctorSelection(doctor)}
+                              className="p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-colors"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="bg-green-100 p-2 rounded-lg">
+                                    <Stethoscope className="h-5 w-5 text-green-600" />
+                                  </div>
+                                  <div>
+                                    <h4 className="font-medium text-gray-900">
+                                      Dr. {doctor.first_name} {doctor.last_name}
+                                    </h4>
+                                    {doctor.specialization && (
+                                      <p className="text-sm text-gray-600">{doctor.specialization}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <ChevronRight className="h-5 w-5 text-gray-400" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 3: Select Date & Time */}
+                  {bookingStep === 3 && selectedDoctor && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <button
+                          onClick={() => setBookingStep(2)}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <h3 className="text-lg font-medium text-gray-900">Pick Date & Time</h3>
+                      </div>
+                      
+                      <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                        <p className="text-sm text-blue-800">
+                          <strong>Doctor:</strong> Dr. {selectedDoctor.first_name} {selectedDoctor.last_name}
+                        </p>
+                        <p className="text-sm text-blue-700">
+                          <strong>Clinic:</strong> {selectedClinic.name}
+                        </p>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Select Date *
+                            </label>
+                            <input
+                              type="date"
+                              min={today}
+                              max={(() => {
+                                const maxDate = new Date();
+                                maxDate.setMonth(maxDate.getMonth() + 3); // 3 months ahead
+                                return maxDate.toISOString().split('T')[0];
+                              })()}
+                              value={selectedDate}
+                              onChange={(e) => setSelectedDate(e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              required
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Select Time *
+                            </label>
+                            <input
+                              type="time"
+                              min="08:00"
+                              max="18:00"
+                              step="900" // 15-minute intervals
+                              value={selectedTimeSlot?.time || ''}
+                              onChange={(e) => {
+                                if (selectedDate && e.target.value) {
+                                  handleDateTimeSelection(selectedDate, e.target.value);
+                                }
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              required
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Business hours: 8:00 AM - 6:00 PM
+                            </p>
+                          </div>
+                        </div>
+
+                        {selectedDate && selectedTimeSlot && (
+                          <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                            <h4 className="font-medium text-green-900 mb-2">Selected Appointment Time</h4>
+                            <div className="space-y-1 text-sm text-green-800">
+                              <p><strong>Date:</strong> {formatDate(selectedTimeSlot.datetime)}</p>
+                              <p><strong>Time:</strong> {selectedTimeSlot.time}</p>
+                              <p><strong>Doctor:</strong> Dr. {selectedDoctor.first_name} {selectedDoctor.last_name}</p>
+                              <p><strong>Clinic:</strong> {selectedClinic.name}</p>
+                            </div>
+                            <button
+                              onClick={() => setBookingStep(4)}
+                              className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+                            >
+                              Continue to Details
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                            <div className="text-sm text-yellow-800">
+                              <p className="font-medium mb-1">Please Note:</p>
+                              <ul className="list-disc list-inside space-y-1">
+                                <li>Your appointment request will be reviewed by a nurse</li>
+                                <li>You'll receive confirmation once approved</li>
+                                <li>If your preferred time is unavailable, we'll contact you with alternatives</li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 4: Appointment Details */}
+                  {bookingStep === 4 && selectedDate && selectedTimeSlot && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <button
+                          onClick={() => setBookingStep(3)}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <h3 className="text-lg font-medium text-gray-900">Appointment Details</h3>
+                      </div>
+                      
+                      <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
+                        <h4 className="font-medium text-green-900 mb-2">Appointment Summary</h4>
+                        <div className="space-y-1 text-sm text-green-800">
+                          <p><strong>Clinic:</strong> {selectedClinic.name}</p>
+                          <p><strong>Doctor:</strong> Dr. {selectedDoctor.first_name} {selectedDoctor.last_name}</p>
+                          <p><strong>Date:</strong> {formatDate(selectedTimeSlot.datetime)}</p>
+                          <p><strong>Time:</strong> {selectedTimeSlot.time}</p>
+                        </div>
+                      </div>
+
+                      <form onSubmit={handleBookAppointment} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Reason for Visit *
+                          </label>
+                          <textarea
+                            required
+                            rows={4}
+                            value={bookingData.reason}
+                            onChange={(e) => setBookingData({...bookingData, reason: e.target.value})}
+                            placeholder="Please describe the reason for your appointment..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            maxLength={500}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            {bookingData.reason.length}/500 characters
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Symptoms (Optional)
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={bookingData.symptoms}
+                            onChange={(e) => setBookingData({...bookingData, symptoms: e.target.value})}
+                            placeholder="Describe any specific symptoms you're experiencing..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            maxLength={300}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            {bookingData.symptoms.length}/300 characters
+                          </p>
+                        </div>
+                        
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                            <div className="text-sm text-yellow-800">
+                              <p className="font-medium mb-1">Important Notes:</p>
+                              <ul className="list-disc list-inside space-y-1">
+                                <li>Your appointment will be reviewed by a nurse before approval</li>
+                                <li>You'll receive an email confirmation once approved</li>
+                                <li>For urgent medical concerns, please visit the emergency room</li>
+                                <li>Please arrive 15 minutes early for your appointment</li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex gap-3 pt-4">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowBookingModal(false);
+                              resetBookingData();
+                            }}
+                            className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!bookingData.reason.trim()}
+                            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Book Appointment
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -845,25 +1312,6 @@ const PatientAppointments = () => {
                 </div>
                 
                 <form onSubmit={handleEditAppointment} className="p-6 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Healthcare Provider *
-                    </label>
-                    <select
-                      required
-                      value={editingAppointment.healthcare_provider}
-                      onChange={(e) => setEditingAppointment({...editingAppointment, healthcare_provider: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select a healthcare provider</option>
-                      {providers.map(provider => (
-                        <option key={provider.id} value={provider.id}>
-                          Dr. {provider.first_name} {provider.last_name} ({provider.role?.name})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -959,21 +1407,25 @@ const PatientAppointments = () => {
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-gray-500 mb-2">Healthcare Provider</label>
+                    <label className="block text-sm font-medium text-gray-500 mb-2">Clinic</label>
                     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
                       <div className="bg-blue-100 p-2 rounded-lg">
-                        <Stethoscope className="h-5 w-5 text-blue-600" />
+                        <Building className="h-5 w-5 text-blue-600" />
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">
-                          Dr. {selectedAppointment.healthcare_provider?.first_name} {selectedAppointment.healthcare_provider?.last_name}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          {selectedAppointment.healthcare_provider?.role?.name}
-                          {selectedAppointment.healthcare_provider?.specialization && 
-                            ` • ${selectedAppointment.healthcare_provider.specialization}`
-                          }
-                        </p>
+                        <p className="font-medium text-gray-900">{selectedAppointment.clinic_name}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500 mb-2">Healthcare Provider</label>
+                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      <div className="bg-green-100 p-2 rounded-lg">
+                        <Stethoscope className="h-5 w-5 text-green-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{selectedAppointment.doctor_name}</p>
                       </div>
                     </div>
                   </div>
@@ -985,6 +1437,15 @@ const PatientAppointments = () => {
                     </div>
                   </div>
                   
+                  {selectedAppointment.symptoms && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-500 mb-2">Symptoms</label>
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <p className="text-gray-900">{selectedAppointment.symptoms}</p>
+                      </div>
+                    </div>
+                  )}
+                  
                   {selectedAppointment.notes && (
                     <div>
                       <label className="block text-sm font-medium text-gray-500 mb-2">Provider Notes</label>
@@ -993,17 +1454,6 @@ const PatientAppointments = () => {
                       </div>
                     </div>
                   )}
-                  
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <label className="block font-medium text-gray-500 mb-1">Created</label>
-                      <p className="text-gray-700">{formatDate(selectedAppointment.created_at)}</p>
-                    </div>
-                    <div>
-                      <label className="block font-medium text-gray-500 mb-1">Last Updated</label>
-                      <p className="text-gray-700">{formatDate(selectedAppointment.updated_at)}</p>
-                    </div>
-                  </div>
 
                   {selectedAppointment.status === 'A' && isUpcoming(selectedAppointment) && (
                     <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -1011,7 +1461,19 @@ const PatientAppointments = () => {
                         <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
                         <div className="text-sm text-green-800">
                           <p className="font-medium mb-1">Appointment Confirmed</p>
-                          <p>Your appointment has been approved. Please arrive 15 minutes early and bring a valid ID and insurance card if applicable.</p>
+                          <p>Your appointment has been approved by our nursing staff. Please arrive 15 minutes early and bring a valid ID.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedAppointment.status === 'P' && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <div className="flex items-start gap-2">
+                        <Clock className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                        <div className="text-sm text-yellow-800">
+                          <p className="font-medium mb-1">Pending Approval</p>
+                          <p>Your appointment is being reviewed by our nursing staff. You'll receive an email notification once approved.</p>
                         </div>
                       </div>
                     </div>
@@ -1026,7 +1488,7 @@ const PatientAppointments = () => {
                     >
                       Close
                     </button>
-                    {selectedAppointment.status === 'P' && (
+                    {canEditAppointment(selectedAppointment) && (
                       <button
                         onClick={() => {
                           const appointmentDate = new Date(selectedAppointment.appointment_date);
