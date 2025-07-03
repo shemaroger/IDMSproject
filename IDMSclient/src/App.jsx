@@ -1,7 +1,7 @@
 // src/App.jsx
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import ProtectedRoute, { PatientRoute, ProviderRoute, AdminRoute } from './components/ProtectedRoute';
+import ProtectedRoute, { PatientRoute, ProviderRoute, AdminRoute, NurseRoute } from './components/ProtectedRoute';
 
 // Auth pages
 import Login from './pages/auth/Login';
@@ -9,11 +9,22 @@ import SignUp from './pages/auth/SignUp';
 
 // Dashboard pages
 import PatientDashboard from './pages/patient/Dashboard';
+import PatientAppointments from './pages/patient/Appointments';
 import ProviderDashboard from './pages/provider/Dashboard';
 import AdminDashboard from './pages/admin/Dashboard';
-import ClinicManagement from './pages/admin/ClinicManagement';
+import NurseDashboard from './pages/nurse/Dashboard';
 
-// Admin Management pages
+// Provider pages
+import AppointmentManagement from './pages/nurse/AppointmentManagement';
+
+// Patient pages
+import EmergencyAmbulanceRequest from './pages/patient/EmergencyAmbulanceRequest';
+
+// Nurse pages
+import NurseAppointmentManagement from './pages/nurse/AppointmentManagement';
+
+// Admin pages
+import ClinicManagement from './pages/admin/ClinicManagement';
 import UserManagement from './pages/admin/UserManagement';
 
 // Profile page
@@ -43,27 +54,211 @@ function App() {
               </ProtectedRoute>
             } />
             
-            {/* Patient Routes */}
+            {/* ================================ */}
+            {/* PATIENT ROUTES */}
+            {/* ================================ */}
             <Route path="/patient/dashboard" element={
               <PatientRoute>
                 <PatientDashboard />
               </PatientRoute>
             } />
+            <Route path="/patient/appointments" element={
+              <PatientRoute>
+                <PatientAppointments />
+              </PatientRoute>
+            } />
+            <Route path="patient/emergency" element={
+              <PatientRoute>
+                <EmergencyAmbulanceRequest />
+              </PatientRoute>
+            } />
             
-            {/* Provider Routes */}
+            
+            {/* Catch-all patient routes */}
+            <Route path="/patient/*" element={
+              <PatientRoute>
+                <PatientDashboard />
+              </PatientRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* NURSE ROUTES */}
+            {/* ================================ */}
+            <Route path="/nurse/dashboard" element={
+              <NurseRoute>
+                <NurseDashboard />
+              </NurseRoute>
+            } />
+            <Route path="/nurse/appointments" element={
+              <NurseRoute>
+                <NurseAppointmentManagement />
+              </NurseRoute>
+            } />
+            <Route path="/nurse/patients" element={
+              <NurseRoute>
+                <div>Nurse Patient Registry - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/reception" element={
+              <NurseRoute>
+                <div>Reception Desk - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/records" element={
+              <NurseRoute>
+                <div>Medical Records - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/emergency" element={
+              <NurseRoute>
+                <EmergencyAmbulanceRequest/>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/vitals" element={
+              <NurseRoute>
+                <div>Vital Signs - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/medications" element={
+              <NurseRoute>
+                <div>Medication Admin - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/coordination" element={
+              <NurseRoute>
+                <div>Care Coordination - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/reports" element={
+              <NurseRoute>
+                <div>Shift Reports - Coming Soon</div>
+              </NurseRoute>
+            } />
+            <Route path="/nurse/settings" element={
+              <NurseRoute>
+                <div>Nurse Settings - Coming Soon</div>
+              </NurseRoute>
+            } />
+            
+            {/* Catch-all nurse routes */}
+            <Route path="/nurse/*" element={
+              <NurseRoute>
+                <NurseDashboard />
+              </NurseRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* DOCTOR ROUTES */}
+            {/* ================================ */}
+            <Route path="/doctor/dashboard" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ProviderDashboard />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/appointments" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <AppointmentManagement />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/patients" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Doctor Patient List - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/records" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Medical Records - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/emergencies" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Emergency Cases - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/consultations" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Consultations - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/prescriptions" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Prescriptions - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/reports" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Clinical Reports - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            
+            {/* Catch-all doctor routes */}
+            <Route path="/doctor/*" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ProviderDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* PROVIDER ROUTES */}
+            {/* ================================ */}
             <Route path="/provider/dashboard" element={
               <ProviderRoute>
                 <ProviderDashboard />
               </ProviderRoute>
             } />
+            <Route path="/provider/appointments" element={
+              <ProviderRoute>
+                <AppointmentManagement />
+              </ProviderRoute>
+            } />
             
-            {/* Admin Routes */}
+            {/* Catch-all provider routes */}
+            <Route path="/provider/*" element={
+              <ProviderRoute>
+                <ProviderDashboard />
+              </ProviderRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* HEALTH PROVIDER ROUTES */}
+            {/* ================================ */}
+            <Route path="/health-provider/dashboard" element={
+              <ProtectedRoute requiredRole="Health Provider">
+                <ProviderDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* Catch-all health provider routes */}
+            <Route path="/health-provider/*" element={
+              <ProtectedRoute requiredRole="Health Provider">
+                <ProviderDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* PUBLIC HEALTH PROVIDER ROUTES */}
+            {/* ================================ */}
+            <Route path="/public-health/dashboard" element={
+              <ProtectedRoute requiredRole="Public Health Provider">
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* Catch-all public health routes */}
+            <Route path="/public-health/*" element={
+              <ProtectedRoute requiredRole="Public Health Provider">
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* ================================ */}
+            {/* ADMIN ROUTES */}
+            {/* ================================ */}
             <Route path="/admin/dashboard" element={
               <AdminRoute>
                 <AdminDashboard />
               </AdminRoute>
             } />
-            
             <Route path="/admin/users" element={
               <AdminRoute>
                 <UserManagement />
@@ -74,7 +269,11 @@ function App() {
                 <ClinicManagement />
               </AdminRoute>
             } />
-            
+            <Route path="/admin/appointments" element={
+              <AdminRoute>
+                <AppointmentManagement />
+              </AdminRoute>
+            } />
             
             {/* Catch-all admin routes */}
             <Route path="/admin/*" element={
@@ -83,67 +282,9 @@ function App() {
               </AdminRoute>
             } />
             
-            {/* Additional role-specific routes */}
-            <Route path="/doctor/dashboard" element={
-              <ProtectedRoute requiredRole="Doctor">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/nurse/dashboard" element={
-              <ProtectedRoute requiredRole="Nurse">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/health-provider/dashboard" element={
-              <ProtectedRoute requiredRole="Health Provider">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/public-health/dashboard" element={
-              <ProtectedRoute requiredRole="Public Health Provider">
-                <AdminDashboard />
-              </ProtectedRoute>
-            } />
-            
-            {/* Catch-all routes for role-specific dashboards */}
-            <Route path="/patient/*" element={
-              <PatientRoute>
-                <PatientDashboard />
-              </PatientRoute>
-            } />
-            
-            <Route path="/provider/*" element={
-              <ProviderRoute>
-                <ProviderDashboard />
-              </ProviderRoute>
-            } />
-            
-            <Route path="/doctor/*" element={
-              <ProtectedRoute requiredRole="Doctor">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/nurse/*" element={
-              <ProtectedRoute requiredRole="Nurse">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/health-provider/*" element={
-              <ProtectedRoute requiredRole="Health Provider">
-                <ProviderDashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/public-health/*" element={
-              <ProtectedRoute requiredRole="Public Health Provider">
-                <AdminDashboard />
-              </ProtectedRoute>
-            } />
+            {/* ================================ */}
+            {/* DEFAULT AND ERROR ROUTES */}
+            {/* ================================ */}
             
             {/* Default redirect based on authentication */}
             <Route path="/" element={<RoleBasedRedirect />} />
@@ -177,10 +318,10 @@ const RoleBasedRedirect = () => {
     return <Navigate to="/login" replace />;
   }
 
-  // Redirect based on user role (updated to match your healthcare system)
+  // Redirect based on user role
   const userRole = user?.role?.name;
   
-  console.log('Redirecting user with role:', userRole); // Debug log
+  console.log('Redirecting user with role:', userRole);
   
   switch (userRole) {
     case 'Patient':

@@ -466,11 +466,49 @@ class LoginSerializer(serializers.Serializer):
 # ======================== PROFILE SERIALIZERS ========================
 class UserProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    profile_picture_url = serializers.ReadOnlyField()  # Include the property we created
     
     class Meta:
         model = UserProfile
         fields = '__all__'
         read_only_fields = ['created_at', 'updated_at']
+    
+    def validate_profile_picture(self, value):
+        """
+        Validate profile picture upload
+        """
+        if value:
+            # Check file size (5MB limit)
+            if value.size > 5 * 1024 * 1024:
+                raise serializers.ValidationError("Image file size cannot exceed 5MB.")
+            
+            # Check file type
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+            if value.content_type not in allowed_types:
+                raise serializers.ValidationError(
+                    "Only JPEG, PNG, and GIF images are allowed."
+                )
+        
+        return value
+    
+    def to_representation(self, instance):
+        """
+        Customize the serialized output
+        """
+        data = super().to_representation(instance)
+        
+        # Always include the profile_picture_url (with fallback to default)
+        data['profile_picture_url'] = instance.profile_picture_url
+        
+        # Make profile_picture field return the URL instead of file path
+        if instance.profile_picture:
+            request = self.context.get('request')
+            if request:
+                data['profile_picture'] = request.build_absolute_uri(instance.profile_picture.url)
+            else:
+                data['profile_picture'] = instance.profile_picture.url
+        
+        return data
 
 # ======================== CLINIC SERIALIZERS ========================
 class PatientSerializer(serializers.ModelSerializer):

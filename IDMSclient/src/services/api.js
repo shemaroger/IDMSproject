@@ -1,4 +1,4 @@
-// src/services/api.js - Updated with enhanced debugging and clinic management
+// src/services/api.js - CLEAN VERSION
 import axios from 'axios';
 
 // Create axios instance with base configuration
@@ -75,7 +75,6 @@ export const authAPI = {
       window.location.href = '/login';
       return { success: true, message: 'Successfully logged out' };
     } catch (error) {
-      console.error('Logout error:', error);
       localStorage.removeItem('authToken');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -134,98 +133,52 @@ export const authAPI = {
   },
 };
 
-// Enhanced Healthcare API endpoints
+// Healthcare API endpoints
 export const healthcareAPI = {
-  // User Management - Enhanced with clinic support and debugging
+  // User Management
   users: {
     list: async (params) => {
       try {
-        console.log('📤 API: Fetching users with params:', params);
         const response = await api.get('/users/', { params });
-        console.log('✅ Users fetched:', response.data);
-        
-        // Log clinic data for each user for debugging
-        const users = response.data?.results || response.data || [];
-        users.forEach(user => {
-          if (user.clinics && user.clinics.length > 0) {
-            console.log(`User ${user.email} clinics:`, user.clinics);
-          }
-        });
-        
         return response;
       } catch (error) {
-        console.error('❌ Error fetching users:', error.response?.data || error.message);
         throw error;
       }
     },
 
     get: async (id) => {
       try {
-        console.log(`📤 API: Fetching user ${id}...`);
         const response = await api.get(`/users/${id}/`);
-        console.log(`✅ User ${id} fetched:`, response.data);
-        console.log(`User ${id} clinics:`, response.data.clinics);
         return response;
       } catch (error) {
-        console.error(`❌ Error fetching user ${id}:`, error.response?.data || error.message);
         throw error;
       }
     },
 
     create: async (data) => {
-      console.log('📤 API: Creating user with data:', data);
-      console.log('📤 API: Clinic IDs being sent:', data.clinic_ids);
-      
       try {
         const response = await api.post('/users/', data);
-        console.log('✅ User created successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ User creation failed:', error.response?.data || error.message);
-        if (error.response?.data) {
-          console.error('Validation errors:', error.response.data);
-        }
         throw error;
       }
     },
 
     update: async (id, data) => {
-      console.log('📤 API: Updating user', id, 'with data:', data);
-      console.log('📤 API: Clinic IDs being sent for update:', data.clinic_ids);
-      
       try {
         const response = await api.patch(`/users/${id}/`, data);
-        console.log('✅ User updated successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ User update failed:', error.response?.data || error.message);
-        if (error.response?.data) {
-          console.error('Validation errors:', error.response.data);
-        }
         throw error;
       }
     },
 
     delete: (id) => {
-      console.log('📤 API: Deleting user', id);
       return api.delete(`/users/${id}/`);
-    },
-
-    // Debug method to check clinic assignments
-    debugClinics: async (userId) => {
-      try {
-        const response = await api.get(`/users/${userId}/debug-clinics/`);
-        console.log('Debug clinic info:', response.data);
-        return response.data;
-      } catch (error) {
-        console.error('Debug clinics failed:', error);
-        throw error;
-      }
     },
 
     // Clinic assignment for medical staff
     assignClinics: (userId, clinicIds) => {
-      console.log('📤 API: Assigning clinics', clinicIds, 'to user', userId);
       return api.post(`/users/${userId}/assign-clinics/`, { clinic_ids: clinicIds });
     },
 
@@ -242,68 +195,49 @@ export const healthcareAPI = {
     deactivate: (id) => api.patch(`/users/${id}/`, { is_active: false }),
   },
 
-  // Enhanced Clinic Management
+  // Clinic Management
   clinics: {
     list: async (params) => {
       try {
-        console.log('📤 API: Fetching clinics with params:', params);
         const response = await api.get('/clinics/', { params });
-        console.log('✅ Clinics fetched:', response.data);
-        
-        const clinics = response.data?.results || response.data || [];
-        console.log(`Found ${clinics.length} clinics:`, clinics.map(c => ({ id: c.id, name: c.name })));
-        
         return response;
       } catch (error) {
-        console.error('❌ Error fetching clinics:', error.response?.data || error.message);
         throw error;
       }
     },
 
     get: async (id) => {
       try {
-        console.log(`📤 API: Fetching clinic ${id}...`);
         const response = await api.get(`/clinics/${id}/`);
-        console.log(`✅ Clinic ${id} fetched:`, response.data);
         return response;
       } catch (error) {
-        console.error(`❌ Error fetching clinic ${id}:`, error.response?.data || error.message);
         throw error;
       }
     },
 
     create: async (data) => {
-      console.log('📤 API: Creating clinic with data:', data);
       try {
         const response = await api.post('/clinics/', data);
-        console.log('✅ Clinic created successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ Clinic creation failed:', error.response?.data || error.message);
         throw error;
       }
     },
 
     update: async (id, data) => {
-      console.log('📤 API: Updating clinic', id, 'with data:', data);
       try {
         const response = await api.patch(`/clinics/${id}/`, data);
-        console.log('✅ Clinic updated successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ Clinic update failed:', error.response?.data || error.message);
         throw error;
       }
     },
 
     delete: async (id) => {
-      console.log('📤 API: Deleting clinic', id);
       try {
         const response = await api.delete(`/clinics/${id}/`);
-        console.log('✅ Clinic deleted successfully');
         return response;
       } catch (error) {
-        console.error('❌ Clinic deletion failed:', error.response?.data || error.message);
         throw error;
       }
     },
@@ -311,38 +245,29 @@ export const healthcareAPI = {
     // Get staff for a specific clinic
     getStaff: async (clinicId) => {
       try {
-        console.log(`📤 API: Fetching staff for clinic ${clinicId}...`);
         const response = await api.get(`/clinics/${clinicId}/staff/`);
-        console.log(`✅ Staff for clinic ${clinicId}:`, response.data);
         return response;
       } catch (error) {
-        console.error(`❌ Error fetching staff for clinic ${clinicId}:`, error.response?.data || error.message);
         throw error;
       }
     },
 
     // Assign staff to clinic
     assignStaff: async (clinicId, userIds) => {
-      console.log(`📤 API: Assigning staff ${userIds} to clinic ${clinicId}`);
       try {
         const response = await api.post(`/clinics/${clinicId}/assign-staff/`, { user_ids: userIds });
-        console.log('✅ Staff assigned successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ Staff assignment failed:', error.response?.data || error.message);
         throw error;
       }
     },
 
     // Remove staff from clinic
     removeStaff: async (clinicId, userIds) => {
-      console.log(`📤 API: Removing staff ${userIds} from clinic ${clinicId}`);
       try {
         const response = await api.post(`/clinics/${clinicId}/remove-staff/`, { user_ids: userIds });
-        console.log('✅ Staff removed successfully:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ Staff removal failed:', error.response?.data || error.message);
         throw error;
       }
     },
@@ -375,12 +300,9 @@ export const healthcareAPI = {
   roles: {
     list: async (params) => {
       try {
-        console.log('📤 API: Fetching roles...');
         const response = await api.get('/roles/', { params });
-        console.log('✅ Roles fetched:', response.data);
         return response;
       } catch (error) {
-        console.error('❌ Error fetching roles:', error.response?.data || error.message);
         throw error;
       }
     },
@@ -408,48 +330,723 @@ export const healthcareAPI = {
     delete: (id) => api.delete(`/patients/${id}/`),
   },
 
-  // Appointments
   appointments: {
     list: (params) => api.get('/appointments/', { params }),
     get: (id) => api.get(`/appointments/${id}/`),
     create: (data) => api.post('/appointments/', data),
     update: (id, data) => api.patch(`/appointments/${id}/`, data),
     delete: (id) => api.delete(`/appointments/${id}/`),
+    
+    // Individual appointment actions
+    approve: async (id) => {
+      try {
+        const response = await api.post(`/appointments/${id}/approve/`);
+        return response;
+      } catch (error) {
+        throw new Error(error.response?.data?.error || 'Failed to approve appointment');
+      }
+    },
+    
+    cancel: async (id) => {
+      try {
+        const response = await api.post(`/appointments/${id}/cancel/`);
+        return response;
+      } catch (error) {
+        throw new Error(error.response?.data?.error || 'Failed to cancel appointment');
+      }
+    },
+    
+    complete: async (id, notes = '') => {
+      try {
+        const response = await api.post(`/appointments/${id}/complete/`, { notes });
+        return response;
+      } catch (error) {
+        throw new Error(error.response?.data?.error || 'Failed to complete appointment');
+      }
+    },
+    
+    // Appointment queries
+    myUpcoming: () => api.get('/appointments/my_upcoming/'),
+    stats: () => api.get('/appointments/stats/'),
+    calendarView: (startDate, endDate) => api.get('/appointments/calendar_view/', {
+      params: { start_date: startDate, end_date: endDate }
+    }),
+    
+    // Filter by clinic and provider
     byClinic: (clinicId, params) => api.get('/appointments/', { 
       params: { ...params, clinic: clinicId } 
     }),
+    byProvider: (providerId, params) => api.get('/appointments/', {
+      params: { ...params, healthcare_provider: providerId }
+    }),
+    byPatient: (patientId, params) => api.get('/appointments/', {
+      params: { ...params, patient: patientId }
+    }),
+    
+    // Bulk operations - FIXED IMPLEMENTATIONS
+    bulkApprove: async (appointmentIds) => {
+      try {
+        console.log('Bulk approving appointments:', appointmentIds);
+        
+        // If backend has a bulk approve endpoint, use it
+        // Otherwise, use individual API calls
+        const promises = appointmentIds.map(async (id) => {
+          try {
+            return await api.post(`/appointments/${id}/approve/`);
+          } catch (error) {
+            console.error(`Failed to approve appointment ${id}:`, error);
+            throw error;
+          }
+        });
+        
+        const results = await Promise.allSettled(promises);
+        
+        // Check if all operations succeeded
+        const failed = results.filter(result => result.status === 'rejected');
+        const succeeded = results.filter(result => result.status === 'fulfilled');
+        
+        if (failed.length > 0) {
+          console.warn(`${failed.length} appointments failed to approve`);
+          throw new Error(`Failed to approve ${failed.length} out of ${appointmentIds.length} appointments`);
+        }
+        
+        return { 
+          success: true, 
+          message: `${succeeded.length} appointments approved successfully`,
+          results: succeeded.map(result => result.value.data)
+        };
+      } catch (error) {
+        console.error('Bulk approve error:', error);
+        throw new Error(`Bulk approve failed: ${error.message}`);
+      }
+    },
+    
+    bulkCancel: async (appointmentIds) => {
+      try {
+        console.log('Bulk cancelling appointments:', appointmentIds);
+        
+        const promises = appointmentIds.map(async (id) => {
+          try {
+            return await api.post(`/appointments/${id}/cancel/`);
+          } catch (error) {
+            console.error(`Failed to cancel appointment ${id}:`, error);
+            throw error;
+          }
+        });
+        
+        const results = await Promise.allSettled(promises);
+        
+        const failed = results.filter(result => result.status === 'rejected');
+        const succeeded = results.filter(result => result.status === 'fulfilled');
+        
+        if (failed.length > 0) {
+          console.warn(`${failed.length} appointments failed to cancel`);
+          throw new Error(`Failed to cancel ${failed.length} out of ${appointmentIds.length} appointments`);
+        }
+        
+        return { 
+          success: true, 
+          message: `${succeeded.length} appointments cancelled successfully`,
+          results: succeeded.map(result => result.value.data)
+        };
+      } catch (error) {
+        console.error('Bulk cancel error:', error);
+        throw new Error(`Bulk cancel failed: ${error.message}`);
+      }
+    },
+    
+    bulkComplete: async (appointmentIds, notes = '') => {
+      try {
+        console.log('Bulk completing appointments:', appointmentIds);
+        
+        const promises = appointmentIds.map(async (id) => {
+          try {
+            return await api.post(`/appointments/${id}/complete/`, { notes });
+          } catch (error) {
+            console.error(`Failed to complete appointment ${id}:`, error);
+            throw error;
+          }
+        });
+        
+        const results = await Promise.allSettled(promises);
+        
+        const failed = results.filter(result => result.status === 'rejected');
+        const succeeded = results.filter(result => result.status === 'fulfilled');
+        
+        if (failed.length > 0) {
+          console.warn(`${failed.length} appointments failed to complete`);
+          throw new Error(`Failed to complete ${failed.length} out of ${appointmentIds.length} appointments`);
+        }
+        
+        return { 
+          success: true, 
+          message: `${succeeded.length} appointments completed successfully`,
+          results: succeeded.map(result => result.value.data)
+        };
+      } catch (error) {
+        console.error('Bulk complete error:', error);
+        throw new Error(`Bulk complete failed: ${error.message}`);
+      }
+    },
+    
+    // Bulk update status (generic function)
+    bulkUpdateStatus: async (appointmentIds, status, notes = '') => {
+      try {
+        console.log(`Bulk updating appointments to ${status}:`, appointmentIds);
+        
+        const promises = appointmentIds.map(async (id) => {
+          try {
+            return await api.patch(`/appointments/${id}/`, { 
+              status,
+              ...(notes && { notes })
+            });
+          } catch (error) {
+            console.error(`Failed to update appointment ${id} to ${status}:`, error);
+            throw error;
+          }
+        });
+        
+        const results = await Promise.allSettled(promises);
+        
+        const failed = results.filter(result => result.status === 'rejected');
+        const succeeded = results.filter(result => result.status === 'fulfilled');
+        
+        if (failed.length > 0) {
+          console.warn(`${failed.length} appointments failed to update`);
+          throw new Error(`Failed to update ${failed.length} out of ${appointmentIds.length} appointments`);
+        }
+        
+        return { 
+          success: true, 
+          message: `${succeeded.length} appointments updated successfully`,
+          results: succeeded.map(result => result.value.data)
+        };
+      } catch (error) {
+        console.error('Bulk update error:', error);
+        throw new Error(`Bulk update failed: ${error.message}`);
+      }
+    },
+    
+    // Export appointment data
+    export: async (format = 'csv', filters = {}) => {
+      try {
+        const response = await api.get(`/appointments/export/`, {
+          params: { format, ...filters },
+          responseType: 'blob'
+        });
+        return response;
+      } catch (error) {
+        throw new Error(`Export failed: ${error.message}`);
+      }
+    },
+    
+    // Get appointment statistics
+    getStats: async (dateRange = 'week') => {
+      try {
+        const response = await api.get('/appointments/statistics/', {
+          params: { range: dateRange }
+        });
+        return response;
+      } catch (error) {
+        throw new Error(`Failed to get statistics: ${error.message}`);
+      }
+    },
+    
+    // Search appointments
+    search: async (query, filters = {}) => {
+      try {
+        const response = await api.get('/appointments/search/', {
+          params: { q: query, ...filters }
+        });
+        return response;
+      } catch (error) {
+        throw new Error(`Search failed: ${error.message}`);
+      }
+    }
   },
-
-  // Emergency Services
+  
+  // Enhanced Emergency Services with Symptom Integration
   emergencies: {
-    list: (params) => api.get('/emergencies/', { params }),
-    get: (id) => api.get(`/emergencies/${id}/`),
-    create: (data) => api.post('/emergencies/', data),
-    update: (id, data) => api.patch(`/emergencies/${id}/`, data),
+    list: async (params) => {
+      try {
+        const response = await api.get('/emergency-requests/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/emergency-requests/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    create: async (data) => {
+      try {
+        const response = await api.post('/emergency-requests/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    update: async (id, data) => {
+      try {
+        const response = await api.patch(`/emergency-requests/${id}/`, data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    delete: async (id) => {
+      try {
+        const response = await api.delete(`/emergency-requests/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Update emergency request status
+    updateStatus: async (id, status, additionalData = {}) => {
+      try {
+        const response = await api.patch(`/emergency-requests/${id}/update-status/`, {
+          status,
+          ...additionalData
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get emergency requests by suspected disease
+    getByDisease: async (disease) => {
+      try {
+        const response = await api.get('/emergency-requests/by-disease/', {
+          params: { disease }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get critical cases from symptom analysis
+    getCriticalCases: async () => {
+      try {
+        const response = await api.get('/emergency-requests/critical-cases/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
   },
 
-  // Symptom Checker
-  symptoms: {
-    list: (params) => api.get('/symptoms/', { params }),
-    get: (id) => api.get(`/symptoms/${id}/`),
+  // Healthcare Provider Tools for Symptom Management
+  providerSymptoms: {
+    list: async (params) => {
+      try {
+        const response = await api.get('/provider-symptoms/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/provider-symptoms/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get urgent cases requiring attention
+    getUrgentCases: async () => {
+      try {
+        const response = await api.get('/provider-symptoms/urgent-cases/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Add clinical notes to session
+    addClinicalNotes: async (sessionId, notes) => {
+      try {
+        const response = await api.post(`/provider-symptoms/${sessionId}/clinical-notes/`, { notes });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Mark session as reviewed
+    markReviewed: async (sessionId) => {
+      try {
+        const response = await api.post(`/provider-symptoms/${sessionId}/mark-reviewed/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
   },
 
+  // Enhanced Disease Management with Symptom Analysis
   diseases: {
-    list: (params) => api.get('/diseases/', { params }),
-    get: (id) => api.get(`/diseases/${id}/`),
+    list: async (params) => {
+      try {
+        const response = await api.get('/diseases/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/diseases/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    create: async (data) => {
+      try {
+        const response = await api.post('/diseases/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    update: async (id, data) => {
+      try {
+        const response = await api.patch(`/diseases/${id}/`, data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    delete: async (id) => {
+      try {
+        const response = await api.delete(`/diseases/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get symptoms for specific disease
+    getSymptoms: async (diseaseId) => {
+      try {
+        const response = await api.get(`/diseases/${diseaseId}/symptoms/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Analyze symptoms against specific disease
+    analyzeSymptoms: async (diseaseId, symptoms) => {
+      try {
+        const response = await api.post(`/diseases/${diseaseId}/analyze/`, { symptoms });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get all available symptoms across diseases
+    getAvailableSymptoms: async () => {
+      try {
+        const response = await api.get('/diseases/available-symptoms/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Bulk create diseases with templates
+    bulkCreate: async (data = { create_defaults: true }) => {
+      try {
+        const response = await api.post('/diseases/bulk-create/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
   },
 
+  // Comprehensive Symptom Checker System
   symptomChecker: {
-    list: () => api.get('/symptom-checks/'),
-    create: (data) => api.post('/symptom-checks/', data),
-    checkSymptoms: (data) => api.post('/symptom-checks/check_symptoms/', data),
+    // Quick symptom analysis without creating session
+    quickCheck: async (symptoms) => {
+      try {
+        const response = await api.post('/symptom-checker/quick-check/', { symptoms });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Full symptom analysis with session creation
+    analyzeSymptoms: async (data) => {
+      try {
+        const response = await api.post('/symptom-checker/analyze/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get symptom library and reference
+    getSymptomLibrary: async () => {
+      try {
+        const response = await api.get('/symptom-checker/symptoms/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get risk assessment guidelines
+    getRiskGuide: async () => {
+      try {
+        const response = await api.get('/symptom-checker/risk-guide/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Compare symptoms between diseases
+    compareDiseases: async (diseaseIds) => {
+      try {
+        const response = await api.get('/symptom-checker/compare-diseases/', {
+          params: { disease_ids: diseaseIds.join(',') }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get usage statistics
+    getStatistics: async (days = 30) => {
+      try {
+        const response = await api.get('/symptom-checker/statistics/', {
+          params: { days }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
   },
 
-  // Prevention Tips
+  // Symptom Checker Sessions Management
+  symptomSessions: {
+    list: async (params) => {
+      try {
+        const response = await api.get('/symptom-sessions/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/symptom-sessions/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    create: async (data) => {
+      try {
+        const response = await api.post('/symptom-sessions/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    update: async (id, data) => {
+      try {
+        const response = await api.patch(`/symptom-sessions/${id}/`, data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    delete: async (id) => {
+      try {
+        const response = await api.delete(`/symptom-sessions/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Add custom symptom to existing session
+    addSymptom: async (sessionId, symptom) => {
+      try {
+        const response = await api.post(`/symptom-sessions/${sessionId}/add-symptom/`, { symptom });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Re-run analysis for session
+    reanalyze: async (sessionId) => {
+      try {
+        const response = await api.post(`/symptom-sessions/${sessionId}/reanalyze/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Create emergency request from session
+    requestEmergency: async (sessionId, data) => {
+      try {
+        const response = await api.post(`/symptom-sessions/${sessionId}/request-emergency/`, data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+  },
+
+  // Disease Analysis Results
+  diseaseAnalyses: {
+    list: async (params) => {
+      try {
+        const response = await api.get('/disease-analyses/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/disease-analyses/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get analyses for specific session
+    getBySession: async (sessionId) => {
+      try {
+        const response = await api.get('/disease-analyses/', {
+          params: { session_id: sessionId }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+  },
+
+  // Enhanced Prevention Tips
   preventionTips: {
-    list: (params) => api.get('/prevention-tips/', { params }),
-    get: (id) => api.get(`/prevention-tips/${id}/`),
-    forDisease: (disease) => api.get(`/prevention-tips/for_disease/?disease=${disease}`),
+    list: async (params) => {
+      try {
+        const response = await api.get('/prevention-tips/', { params });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    get: async (id) => {
+      try {
+        const response = await api.get(`/prevention-tips/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    create: async (data) => {
+      try {
+        const response = await api.post('/prevention-tips/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    update: async (id, data) => {
+      try {
+        const response = await api.patch(`/prevention-tips/${id}/`, data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    delete: async (id) => {
+      try {
+        const response = await api.delete(`/prevention-tips/${id}/`);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Get tips by disease with category grouping
+    getByDisease: async (diseaseName) => {
+      try {
+        const response = await api.get('/prevention-tips/by-disease/', {
+          params: { disease: diseaseName }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Filter tips by category
+    getByCategory: async (category) => {
+      try {
+        const response = await api.get('/prevention-tips/', {
+          params: { category }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+
+    // Filter tips by disease type
+    getByDiseaseType: async (diseaseType) => {
+      try {
+        const response = await api.get('/prevention-tips/', {
+          params: { disease_type: diseaseType }
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
   },
 
   // Alerts and Notifications
@@ -464,7 +1061,7 @@ export const healthcareAPI = {
     acknowledge: (id) => api.post(`/notifications/${id}/acknowledge/`),
   },
 
-  // User Profile - Enhanced profile management
+  // User Profile
   profile: {
     get: async () => {
       try {
@@ -515,7 +1112,7 @@ export const healthcareAPI = {
   },
 };
 
-// Enhanced Utility functions
+// Utility functions
 export const apiUtils = {
   uploadFile: async (endpoint, file, additionalData = {}) => {
     const formData = new FormData();
@@ -560,8 +1157,7 @@ export const apiUtils = {
   userUtils: {
     createCompleteUser: async (userData) => {
       try {
-        console.log('Creating complete user with data:', userData);
-        const response = await api.post('/users/', userData);
+        const response = await healthcareAPI.users.create(userData);
         return response.data;
       } catch (error) {
         throw new Error(apiUtils.formatErrorMessage(error));
@@ -570,17 +1166,8 @@ export const apiUtils = {
 
     updateCompleteUser: async (userId, userData) => {
       try {
-        console.log('Updating complete user:', userId, 'with data:', userData);
-        const userResponse = await api.patch(`/users/${userId}/`, {
-          email: userData.email,
-          first_name: userData.first_name,
-          last_name: userData.last_name,
-          role: userData.role,
-          is_active: userData.is_active,
-          is_staff: userData.is_staff,
-          clinic_ids: userData.clinic_ids || []
-        });
-        return userResponse.data;
+        const response = await healthcareAPI.users.update(userId, userData);
+        return response.data;
       } catch (error) {
         throw new Error(apiUtils.formatErrorMessage(error));
       }
@@ -655,63 +1242,141 @@ export const apiUtils = {
         throw new Error(apiUtils.formatErrorMessage(error));
       }
     },
-  }
-};
+  },
 
-// Test functions for debugging
-window.testClinicData = async () => {
-  try {
-    console.log('🧪 Testing clinic data loading...');
-    
-    const clinicsResponse = await healthcareAPI.clinics.list();
-    console.log('Clinics response:', clinicsResponse.data);
-    
-    const usersResponse = await healthcareAPI.users.list();
-    console.log('Users response:', usersResponse.data);
-    
-    const users = usersResponse.data?.results || usersResponse.data || [];
-    const medicalStaff = users.filter(u => ['Doctor', 'Nurse'].includes(u.role?.name));
-    
-    console.log('Medical staff with clinics:', medicalStaff.map(u => ({
-      name: `${u.first_name} ${u.last_name}`,
-      role: u.role?.name,
-      clinics: u.clinics
-    })));
-    
-  } catch (error) {
-    console.error('Test failed:', error);
-  }
-};
-
-window.testUserClinicFlow = async () => {
-  try {
-    console.log('🧪 Testing user-clinic flow...');
-    
-    const usersResponse = await healthcareAPI.users.list();
-    console.log('Users:', usersResponse.data);
-    
-    const clinicsResponse = await healthcareAPI.clinics.list();
-    console.log('Clinics:', clinicsResponse.data);
-    
-    const users = usersResponse.data?.results || usersResponse.data || [];
-    const medicalStaff = users.find(u => ['Doctor', 'Nurse'].includes(u.role?.name));
-    
-    if (medicalStaff) {
-      console.log('Found medical staff:', medicalStaff);
-      console.log('Their clinics:', medicalStaff.clinics);
-      
+  // 🆕 Symptom Checker Utilities
+  symptomUtils: {
+    // Initialize default diseases
+    initializeDefaultDiseases: async () => {
       try {
-        const debugInfo = await healthcareAPI.users.debugClinics(medicalStaff.id);
-        console.log('Debug info:', debugInfo);
-      } catch (debugError) {
-        console.warn('Debug endpoint not available:', debugError);
+        const response = await healthcareAPI.diseases.bulkCreate({ create_defaults: true });
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
       }
-    } else {
-      console.log('No medical staff found for testing');
+    },
+
+    // Quick symptom assessment
+    quickAssessment: async (symptoms) => {
+      try {
+        const response = await healthcareAPI.symptomChecker.quickCheck(symptoms);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+
+    // Full symptom analysis workflow
+    fullAnalysis: async (symptomsData) => {
+      try {
+        const response = await healthcareAPI.symptomChecker.analyzeSymptoms(symptomsData);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+
+    // Get emergency recommendations
+    getEmergencyRecommendations: async (sessionId) => {
+      try {
+        const session = await healthcareAPI.symptomSessions.get(sessionId);
+        const sessionData = session.data;
+        
+        if (sessionData.severity_level === 'critical') {
+          return {
+            immediate_action: 'Seek emergency medical care immediately',
+            recommendation: 'Go to nearest hospital or call emergency services',
+            risk_level: 'CRITICAL',
+            should_call_emergency: true
+          };
+        } else if (sessionData.severity_level === 'severe') {
+          return {
+            immediate_action: 'Seek medical attention today',
+            recommendation: 'Contact your doctor or visit a clinic promptly',
+            risk_level: 'HIGH',
+            should_call_emergency: false
+          };
+        }
+        
+        return {
+          immediate_action: sessionData.recommendation,
+          risk_level: sessionData.severity_level?.toUpperCase(),
+          should_call_emergency: false
+        };
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+
+    // Get prevention tips for analysis results
+    getPreventionTipsForSession: async (sessionId) => {
+      try {
+        const session = await healthcareAPI.symptomSessions.get(sessionId);
+        const sessionData = session.data;
+        
+        if (sessionData.primary_disease_name) {
+          const tips = await healthcareAPI.preventionTips.getByDisease(sessionData.primary_disease_name);
+          return tips.data;
+        }
+        
+        return { tips_by_category: {}, total_tips: 0 };
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+
+    // Format symptom analysis results for display
+    formatAnalysisResults: (analysisData) => {
+      return {
+        summary: {
+          risk_score: analysisData.overall_risk_score,
+          severity: analysisData.severity_level,
+          primary_disease: analysisData.primary_suspected_disease,
+          emergency_needed: analysisData.emergency_recommended,
+          clinic_visit_needed: analysisData.nearest_clinic_recommended
+        },
+        detailed_results: analysisData.disease_analyses || [],
+        recommendations: {
+          immediate: analysisData.recommendation,
+          follow_up: analysisData.needs_followup,
+          follow_up_date: analysisData.followup_date
+        },
+        prevention_tips: analysisData.prevention_tips || []
+      };
+    },
+
+    // Check if symptoms warrant emergency care
+    isEmergencyCase: (symptoms) => {
+      const emergencySymptoms = [
+        'difficulty_breathing', 'chest_pain', 'confusion', 'seizures',
+        'blue_lips_or_fingernails', 'severe_chest_pain', 'loss_of_consciousness'
+      ];
+      
+      return symptoms.some(symptom => 
+        emergencySymptoms.some(emergency => 
+          symptom.toLowerCase().includes(emergency.toLowerCase())
+        )
+      );
+    },
+
+    // Get symptom severity category
+    getSymptomSeverity: async (symptoms) => {
+      try {
+        const analysis = await healthcareAPI.symptomChecker.quickCheck(symptoms);
+        const results = analysis.data.results || [];
+        
+        if (results.length === 0) return 'mild';
+        
+        const highestSeverity = results.reduce((max, current) => {
+          const severityOrder = { mild: 1, moderate: 2, severe: 3, critical: 4 };
+          return severityOrder[current.severity] > severityOrder[max] ? current.severity : max;
+        }, 'mild');
+        
+        return highestSeverity;
+      } catch (error) {
+        return 'mild'; // Default to mild if analysis fails
+      }
     }
-    
-  } catch (error) {
-    console.error('Test failed:', error);
   }
 };
 

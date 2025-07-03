@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+import os
 
 class Role(models.Model):
     """
@@ -77,6 +78,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     def has_module_perms(self, app_label):
         return self.is_superuser
+def user_profile_image_path(instance, filename):
+    """
+    Custom upload path function for user profile images
+    """
+    # Get file extension
+    ext = filename.split('.')[-1]
+    # Create filename: user_id_profile.extension
+    filename = f'user_{instance.user.id}_profile.{ext}'
+    # Return the upload path
+    return os.path.join('profile_images', str(instance.user.id), filename)
+
 class UserProfile(models.Model):
     """
     Extended profile information for users
@@ -93,7 +105,14 @@ class UserProfile(models.Model):
     address = models.TextField(blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, blank=True)
-    profile_picture = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
+    
+    # Updated profile picture field
+    profile_picture = models.ImageField(
+        upload_to=user_profile_image_path,
+        null=True, 
+        blank=True,
+        help_text="Upload a profile picture (JPG, PNG, GIF supported)"
+    )
     
     # For healthcare professionals
     license_number = models.CharField(max_length=100, blank=True)
@@ -108,7 +127,16 @@ class UserProfile(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Profile of {self.user.email}"
+        return f"{self.user.first_name} {self.user.last_name} Profile"
+    
+    @property
+    def profile_picture_url(self):
+        """
+        Return the URL of the profile picture or a default image
+        """
+        if self.profile_picture and hasattr(self.profile_picture, 'url'):
+            return self.profile_picture.url
+        return '/static/images/default-profile.png'  # Path to your default image
 class Clinic(models.Model):
     """
     Healthcare facility where doctors/nurses work and patients visit

@@ -16,6 +16,7 @@ from django.db.models import Count
 from collections import Counter
 from django.contrib.auth import authenticate, login, logout
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .models import *
 from .serializers import *
 
@@ -565,9 +566,135 @@ class UserProfileViewSet(viewsets.ModelViewSet):
     queryset = UserProfile.objects.all()
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]  # Support file uploads
     
     def get_queryset(self):
         return self.queryset if self.request.user.is_superuser else self.queryset.filter(user=self.request.user)
+    
+    def get_serializer_context(self):
+        """
+        Add request to serializer context for URL building
+        """
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+    
+    def perform_create(self, serializer):
+        """
+        Automatically set the user when creating a profile
+        """
+        serializer.save(user=self.request.user)
+    
+    def perform_update(self, serializer):
+        """
+        Handle profile updates with proper user assignment
+        """
+        # Ensure user can only update their own profile (unless superuser)
+        if not self.request.user.is_superuser and serializer.instance.user != self.request.user:
+            raise permissions.PermissionDenied("You can only update your own profile.")
+        
+        serializer.save()
+    
+    @action(detail=False, methods=['get'], url_path='me')
+    def get_my_profile(self, request):
+        """
+        Get the current user's profile
+        URL: /profiles/me/
+        """
+        try:
+            profile = UserProfile.objects.get(user=request.user)
+            serializer = self.get_serializer(profile)
+            return Response(serializer.data)
+        except UserProfile.DoesNotExist:
+            return Response(
+                {"detail": "Profile not found. Please create a profile first."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['post', 'put', 'patch'], url_path='me')
+    def update_my_profile(self, request):
+        """
+        Create or update the current user's profile
+        URL: /profiles/me/
+        """
+        try:
+            profile = UserProfile.objects.get(user=request.user)
+            # Update existing profile
+            serializer = self.get_serializer(profile, data=request.data, partial=True)
+        except UserProfile.DoesNotExist:
+            # Create new profile
+            serializer = self.get_serializer(data=request.data)
+        
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'], url_path='me/upload-picture')
+    def upload_profile_picture(self, request):
+        """
+        Upload only the profile picture
+        URL: /profiles/me/upload-picture/
+        """
+        try:
+            profile = UserProfile.objects.get(user=request.user)
+        except UserProfile.DoesNotExist:
+            return Response(
+                {"detail": "Profile not found. Please create a profile first."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if 'profile_picture' not in request.FILES:
+            return Response(
+                {"detail": "No image file provided."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update only the profile picture
+        serializer = self.get_serializer(
+            profile, 
+            data={'profile_picture': request.FILES['profile_picture']}, 
+            partial=True
+        )
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "message": "Profile picture uploaded successfully.",
+                "profile_picture_url": serializer.instance.profile_picture_url
+            }, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['delete'], url_path='me/remove-picture')
+    def remove_profile_picture(self, request):
+        """
+        Remove the current user's profile picture
+        URL: /profiles/me/remove-picture/
+        """
+        try:
+            profile = UserProfile.objects.get(user=request.user)
+        except UserProfile.DoesNotExist:
+            return Response(
+                {"detail": "Profile not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if profile.profile_picture:
+            # Delete the file
+            profile.profile_picture.delete(save=False)
+            profile.profile_picture = None
+            profile.save()
+            
+            return Response({
+                "message": "Profile picture removed successfully.",
+                "profile_picture_url": profile.profile_picture_url  # Will return default image URL
+            }, status=status.HTTP_200_OK)
+        
+        return Response(
+            {"detail": "No profile picture to remove."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 class PatientViewSet(viewsets.ModelViewSet, NotificationMixin):
     queryset = Patient.objects.all()
