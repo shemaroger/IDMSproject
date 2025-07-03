@@ -707,12 +707,20 @@ class PatientViewSet(viewsets.ModelViewSet, NotificationMixin):
             return self.queryset.filter(user=self.request.user)
         return self.queryset
 
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django.utils import timezone
+from datetime import datetime, timedelta
+from .models import Appointment, Clinic, User, DoctorSchedule
+from .serializers import AppointmentCreateSerializer, AppointmentUpdateSerializer, AppointmentSerializer
+
 class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
     queryset = Appointment.objects.select_related(
-        'patient__user', 'healthcare_provider__role'
-    ).prefetch_related('patient__user__profile')
+        'patient', 'healthcare_provider__role', 'clinic'
+    ).prefetch_related('patient__profile', 'healthcare_provider__profile')
     permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'healthcare_provider', 'patient']
+    filterset_fields = ['status', 'healthcare_provider', 'patient', 'clinic']
     ordering = ['-appointment_date']
 
     def get_serializer_class(self):
@@ -721,7 +729,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             return AppointmentCreateSerializer
         elif self.action in ['update', 'partial_update']:
             return AppointmentUpdateSerializer
-        return AppointmentDetailSerializer
+        return AppointmentSerializer
 
     def get_queryset(self):
         """Filter appointments based on user role"""
@@ -730,7 +738,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         
         if user.role.name == 'Patient':
             # Patients see only their own appointments
-            queryset = queryset.filter(patient__user=user)
+            queryset = queryset.filter(patient=user)
         elif user.role.name in ['Doctor', 'Nurse']:
             # Healthcare providers see appointments assigned to them
             queryset = queryset.filter(healthcare_provider=user)
@@ -738,6 +746,158 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         
         return queryset
 
+    # ======================== CLINIC-FIRST FLOW ACTIONS ========================
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def available_clinics(self, request):
+        """Get all available clinics for appointment booking"""
+        from django.db.models import Count, Q
+        
+        clinics = Clinic.objects.filter(is_public=True).annotate(
+            doctors_count=Count('staff', filter=Q(staff__role__name='Doctor')),
+            nurses_count=Count('staff', filter=Q(staff__role__name='Nurse'))
+        ).order_by('name')
+        
+        from .serializers import ClinicSerializer
+        serializer = ClinicSerializer(clinics, many=True)
+        return Response({
+            'count': clinics.count(),
+            'results': serializer.data
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def clinic_doctors(self, request):
+        """Get doctors available at a specific clinic"""
+        clinic_id = request.query_params.get('clinic_id')
+        
+        if not clinic_id:
+            return Response(
+                {'error': 'clinic_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            clinic = Clinic.objects.get(id=clinic_id)
+        except Clinic.DoesNotExist:
+            return Response(
+                {'error': 'Clinic not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get doctors working at this clinic
+        doctors = clinic.staff.filter(
+            role__name='Doctor'
+        ).select_related('role', 'profile').order_by('first_name', 'last_name')
+        
+        from .serializers import DoctorSerializer
+        serializer = DoctorSerializer(doctors, many=True)
+        
+        return Response({
+            'clinic': ClinicSerializer(clinic).data,
+            'doctors': serializer.data,
+            'count': doctors.count()
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def doctor_availability(self, request):
+        """Get doctor's availability for appointment booking"""
+        doctor_id = request.query_params.get('doctor_id')
+        clinic_id = request.query_params.get('clinic_id')
+        date = request.query_params.get('date')  # Format: YYYY-MM-DD
+        
+        if not all([doctor_id, clinic_id]):
+            return Response(
+                {'error': 'doctor_id and clinic_id parameters are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            doctor = User.objects.get(id=doctor_id, role__name='Doctor')
+            clinic = Clinic.objects.get(id=clinic_id)
+        except (User.DoesNotExist, Clinic.DoesNotExist):
+            return Response(
+                {'error': 'Doctor or clinic not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate doctor works at clinic
+        if not doctor.clinics.filter(id=clinic_id).exists():
+            return Response(
+                {'error': 'Doctor does not work at this clinic'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Parse date or use today
+        if date:
+            try:
+                check_date = datetime.strptime(date, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            check_date = timezone.now().date()
+        
+        # Get available time slots
+        time_slots = self._get_available_slots(doctor, clinic, check_date)
+        
+        return Response({
+            'date': check_date.isoformat(),
+            'doctor': DoctorSerializer(doctor).data,
+            'clinic': ClinicSerializer(clinic).data,
+            'available': len([slot for slot in time_slots if slot['available']]) > 0,
+            'time_slots': time_slots
+        })
+
+    def _get_available_slots(self, doctor, clinic, date):
+        """Generate available time slots for a doctor"""
+        day_of_week = date.weekday()
+        
+        # Get doctor's schedule for this day
+        schedules = DoctorSchedule.objects.filter(
+            doctor=doctor,
+            clinic=clinic,
+            day_of_week=day_of_week,
+            is_active=True
+        )
+        
+        if not schedules.exists():
+            return []
+        
+        slots = []
+        for schedule in schedules:
+            # Generate hourly slots
+            current_time = schedule.start_time
+            while current_time < schedule.end_time:
+                slot_datetime = timezone.make_aware(
+                    datetime.combine(date, current_time)
+                )
+                
+                # Skip past slots
+                if slot_datetime <= timezone.now():
+                    current_time = (datetime.combine(date, current_time) + timedelta(hours=1)).time()
+                    continue
+                
+                # Check if slot is available
+                is_booked = Appointment.objects.filter(
+                    healthcare_provider=doctor,
+                    clinic=clinic,
+                    appointment_date=slot_datetime,
+                    status__in=['P', 'A']
+                ).exists()
+                
+                slots.append({
+                    'time': current_time.strftime('%H:%M'),
+                    'datetime': slot_datetime.isoformat(),
+                    'available': not is_booked
+                })
+                
+                # Move to next hour
+                current_time = (datetime.combine(date, current_time) + timedelta(hours=1)).time()
+        
+        return slots
+
+    # ======================== APPOINTMENT ACTIONS ========================
     def perform_create(self, serializer):
         """Create appointment and send notifications"""
         appointment = serializer.save()
@@ -745,14 +905,14 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         # Send confirmation email to patient
         try:
             self._send_email(
-                recipient=appointment.patient.user.email,
+                recipient=appointment.patient.email,
                 subject=f"Appointment Confirmation - {appointment.appointment_date.strftime('%b %d, %Y')}",
                 template_name="appointment_created.html",
                 context={
-                    'patient_name': appointment.patient.user.get_full_name(),
+                    'patient_name': appointment.patient.get_full_name(),
                     'appointment_date': appointment.appointment_date,
                     'provider_name': appointment.healthcare_provider.get_full_name(),
-                    'provider_role': appointment.healthcare_provider.role.name,
+                    'clinic_name': appointment.clinic.name,
                     'reason': appointment.reason,
                     'appointment_id': appointment.id
                 }
@@ -760,22 +920,26 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         except Exception as e:
             print(f"Failed to send appointment confirmation email: {e}")
         
-        # Notify healthcare provider
+        # Notify nurses at the clinic for approval
         try:
-            self._send_email(
-                recipient=appointment.healthcare_provider.email,
-                subject=f"New Appointment Request - {appointment.appointment_date.strftime('%b %d, %Y')}",
-                template_name="appointment_provider_notification.html",
-                context={
-                    'provider_name': appointment.healthcare_provider.get_full_name(),
-                    'patient_name': appointment.patient.user.get_full_name(),
-                    'appointment_date': appointment.appointment_date,
-                    'reason': appointment.reason,
-                    'appointment_id': appointment.id
-                }
-            )
+            clinic_nurses = appointment.clinic.staff.filter(role__name='Nurse')
+            for nurse in clinic_nurses:
+                self._send_email(
+                    recipient=nurse.email,
+                    subject=f"New Appointment Request - {appointment.appointment_date.strftime('%b %d, %Y')}",
+                    template_name="appointment_nurse_notification.html",
+                    context={
+                        'nurse_name': nurse.get_full_name(),
+                        'patient_name': appointment.patient.get_full_name(),
+                        'doctor_name': appointment.healthcare_provider.get_full_name(),
+                        'appointment_date': appointment.appointment_date,
+                        'clinic_name': appointment.clinic.name,
+                        'reason': appointment.reason,
+                        'appointment_id': appointment.id
+                    }
+                )
         except Exception as e:
-            print(f"Failed to send provider notification email: {e}")
+            print(f"Failed to send nurse notification email: {e}")
 
     def perform_update(self, serializer):
         """Update appointment and send notifications"""
@@ -791,19 +955,22 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         status_messages = {
             'A': 'approved',
             'C': 'cancelled',
-            'D': 'completed'
+            'D': 'completed',
+            'R': 'rescheduled',
+            'N': 'marked as no-show'
         }
         
         if appointment.status in status_messages:
             try:
                 self._send_email(
-                    recipient=appointment.patient.user.email,
+                    recipient=appointment.patient.email,
                     subject=f"Appointment {status_messages[appointment.status].title()}",
                     template_name="appointment_status_change.html",
                     context={
-                        'patient_name': appointment.patient.user.get_full_name(),
+                        'patient_name': appointment.patient.get_full_name(),
                         'appointment_date': appointment.appointment_date,
                         'provider_name': appointment.healthcare_provider.get_full_name(),
+                        'clinic_name': appointment.clinic.name,
                         'old_status': old_status,
                         'new_status': appointment.status,
                         'status_message': status_messages[appointment.status],
@@ -816,13 +983,20 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def approve(self, request, pk=None):
-        """Approve an appointment (healthcare providers and admins only)"""
+        """Approve an appointment (NURSES ONLY)"""
         appointment = self.get_object()
         
-        # Check permissions
-        if request.user.role.name not in ['Doctor', 'Nurse', 'Admin']:
+        # Check permissions - ONLY NURSES can approve
+        if request.user.role.name != 'Nurse':
             return Response(
-                {'error': 'Only healthcare providers can approve appointments'},
+                {'error': 'Only nurses can approve appointments'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if nurse works at the same clinic
+        if not request.user.clinics.filter(id=appointment.clinic.id).exists():
+            return Response(
+                {'error': 'You can only approve appointments at your clinic'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -839,7 +1013,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         
         return Response({
             'message': 'Appointment approved successfully',
-            'appointment': AppointmentDetailSerializer(appointment, context={'request': request}).data
+            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
         })
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
@@ -847,8 +1021,21 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         """Cancel an appointment"""
         appointment = self.get_object()
         
-        # Check if user can cancel this appointment
-        if not AppointmentDetailSerializer(appointment, context={'request': request}).data['can_cancel']:
+        # Check permissions
+        can_cancel = False
+        user_role = request.user.role.name
+        
+        if user_role == 'Patient':
+            can_cancel = (appointment.patient == request.user and 
+                         appointment.can_be_cancelled())
+        elif user_role == 'Nurse':
+            can_cancel = request.user.clinics.filter(id=appointment.clinic.id).exists()
+        elif user_role == 'Doctor':
+            can_cancel = appointment.healthcare_provider == request.user
+        elif user_role == 'Admin':
+            can_cancel = True
+        
+        if not can_cancel:
             return Response(
                 {'error': 'You do not have permission to cancel this appointment'},
                 status=status.HTTP_403_FORBIDDEN
@@ -868,18 +1055,24 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         
         return Response({
             'message': 'Appointment cancelled successfully',
-            'appointment': AppointmentDetailSerializer(appointment, context={'request': request}).data
+            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
         })
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def complete(self, request, pk=None):
-        """Mark appointment as completed (healthcare providers only)"""
+        """Mark appointment as completed (doctors only)"""
         appointment = self.get_object()
         
-        # Check permissions
-        if request.user.role.name not in ['Doctor', 'Nurse', 'Admin']:
+        # Check permissions - only assigned doctor can complete
+        if request.user.role.name != 'Doctor':
             return Response(
-                {'error': 'Only healthcare providers can complete appointments'},
+                {'error': 'Only doctors can complete appointments'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if appointment.healthcare_provider != request.user:
+            return Response(
+                {'error': 'You can only complete your own appointments'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -889,10 +1082,14 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Optional notes from the provider
+        # Optional fields from the provider
         notes = request.data.get('notes', '')
+        diagnosis = request.data.get('diagnosis', '')
+        
         if notes:
             appointment.notes = notes
+        if diagnosis:
+            appointment.diagnosis = diagnosis
         
         appointment.status = 'D'
         appointment.save()
@@ -901,36 +1098,64 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         
         return Response({
             'message': 'Appointment completed successfully',
-            'appointment': AppointmentDetailSerializer(appointment, context={'request': request}).data
+            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def pending_for_approval(self, request):
+        """Get appointments pending for approval (nurses only)"""
+        if request.user.role.name != 'Nurse':
+            return Response(
+                {'error': 'Only nurses can view pending appointments'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get pending appointments at nurse's clinics
+        nurse_clinics = request.user.clinics.all()
+        pending_appointments = Appointment.objects.filter(
+            clinic__in=nurse_clinics,
+            status='P'
+        ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')
+        
+        serializer = AppointmentSerializer(pending_appointments, many=True, context={'request': request})
+        return Response({
+            'count': pending_appointments.count(),
+            'results': serializer.data
         })
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def my_upcoming(self, request):
         """Get current user's upcoming appointments"""
-        from django.utils import timezone
-        
         if request.user.role.name == 'Patient':
             appointments = Appointment.objects.filter(
-                patient__user=request.user,
+                patient=request.user,
                 appointment_date__gte=timezone.now(),
                 status__in=['P', 'A']
-            ).order_by('appointment_date')[:5]
-        elif request.user.role.name in ['Doctor', 'Nurse']:
+            ).select_related('healthcare_provider', 'clinic').order_by('appointment_date')[:5]
+        elif request.user.role.name == 'Doctor':
             appointments = Appointment.objects.filter(
                 healthcare_provider=request.user,
                 appointment_date__gte=timezone.now(),
                 status__in=['P', 'A']
-            ).order_by('appointment_date')[:10]
+            ).select_related('patient', 'clinic').order_by('appointment_date')[:10]
+        elif request.user.role.name == 'Nurse':
+            # Nurses see pending appointments at their clinics
+            nurse_clinics = request.user.clinics.all()
+            appointments = Appointment.objects.filter(
+                clinic__in=nurse_clinics,
+                appointment_date__gte=timezone.now(),
+                status='P'
+            ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')[:10]
         else:
             # Admin sees system-wide upcoming appointments
             appointments = Appointment.objects.filter(
                 appointment_date__gte=timezone.now(),
                 status__in=['P', 'A']
-            ).order_by('appointment_date')[:20]
+            ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')[:20]
         
-        serializer = AppointmentDetailSerializer(appointments, many=True, context={'request': request})
+        serializer = AppointmentSerializer(appointments, many=True, context={'request': request})
         return Response({
-            'count': appointments.count(),
+            'count': len(appointments),
             'results': serializer.data
         })
 
@@ -940,9 +1165,12 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         user = request.user
         
         if user.role.name == 'Patient':
-            queryset = Appointment.objects.filter(patient__user=user)
-        elif user.role.name in ['Doctor', 'Nurse']:
+            queryset = Appointment.objects.filter(patient=user)
+        elif user.role.name == 'Doctor':
             queryset = Appointment.objects.filter(healthcare_provider=user)
+        elif user.role.name == 'Nurse':
+            nurse_clinics = user.clinics.all()
+            queryset = Appointment.objects.filter(clinic__in=nurse_clinics)
         else:
             queryset = Appointment.objects.all()
         
@@ -955,7 +1183,6 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         }
         
         # Add upcoming count
-        from django.utils import timezone
         stats['upcoming'] = queryset.filter(
             appointment_date__gte=timezone.now(),
             status__in=['P', 'A']
@@ -966,9 +1193,6 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def calendar_view(self, request):
         """Get appointments in calendar format"""
-        from django.utils import timezone
-        from datetime import datetime, timedelta
-        
         # Get date range from query params
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
@@ -987,7 +1211,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         queryset = self.get_queryset().filter(
             appointment_date__date__gte=start_date,
             appointment_date__date__lte=end_date
-        )
+        ).select_related('patient', 'healthcare_provider', 'clinic')
         
         # Group by date
         calendar_data = {}
@@ -999,8 +1223,9 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             calendar_data[date_str].append({
                 'id': appointment.id,
                 'time': appointment.appointment_date.time().strftime('%H:%M'),
-                'patient_name': appointment.patient.user.get_full_name(),
+                'patient_name': appointment.patient.get_full_name(),
                 'provider_name': appointment.healthcare_provider.get_full_name(),
+                'clinic_name': appointment.clinic.name,
                 'reason': appointment.reason,
                 'status': appointment.status,
                 'status_display': appointment.get_status_display()
@@ -1012,6 +1237,45 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             'appointments': calendar_data
         })
 
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def bulk_approve(self, request):
+        """Bulk approve appointments (nurses only)"""
+        if request.user.role.name != 'Nurse':
+            return Response(
+                {'error': 'Only nurses can bulk approve appointments'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        appointment_ids = request.data.get('appointment_ids', [])
+        if not appointment_ids:
+            return Response(
+                {'error': 'No appointment IDs provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get nurse's clinics
+        nurse_clinics = request.user.clinics.all()
+        
+        # Filter appointments that the nurse can approve
+        appointments = Appointment.objects.filter(
+            id__in=appointment_ids,
+            clinic__in=nurse_clinics,
+            status='P'
+        )
+        
+        approved_count = 0
+        for appointment in appointments:
+            appointment.status = 'A'
+            appointment.save()
+            
+            # Send notification
+            self._send_status_change_notification(appointment, 'P')
+            approved_count += 1
+        
+        return Response({
+            'message': f'Successfully approved {approved_count} appointments',
+            'approved_count': approved_count
+        })
 class DiseaseViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing diseases with symptom analysis capabilities

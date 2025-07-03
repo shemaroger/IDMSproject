@@ -1,7 +1,8 @@
 // src/components/layout/Header.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { healthcareAPI } from '../../services/api';
 import { 
   Menu, 
   X, 
@@ -19,6 +20,70 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
   const navigate = useNavigate();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // Load user profile data for profile picture
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!user?.id) return;
+      
+      try {
+        setProfileLoading(true);
+        
+        // Try to get profile using the new endpoint first
+        let profileData = null;
+        try {
+          const profileResponse = await healthcareAPI.profiles.getMyProfile();
+          profileData = profileResponse.data;
+        } catch (profileError) {
+          // Fallback to old method
+          const profileResponse = await healthcareAPI.profiles.list({ user: user.id });
+          profileData = profileResponse.data?.results?.[0] || profileResponse.data?.[0];
+        }
+        
+        setUserProfile(profileData);
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+        setUserProfile(null);
+      } finally {
+        setProfileLoading(false);
+      }
+    };
+
+    loadUserProfile();
+  }, [user?.id]);
+
+  // Get profile image URL
+  const getProfileImageUrl = () => {
+    if (userProfile?.profile_picture_url) {
+      // Convert relative path to full URL
+      if (userProfile.profile_picture_url.startsWith('/media/')) {
+        return `http://localhost:8000${userProfile.profile_picture_url}`;
+      }
+      // If it's already a full URL, return as-is
+      if (userProfile.profile_picture_url.startsWith('http')) {
+        return userProfile.profile_picture_url;
+      }
+      // If it doesn't start with /media/ or http, add the full base
+      return `http://localhost:8000${userProfile.profile_picture_url}`;
+    }
+    
+    if (userProfile?.profile_picture) {
+      // If it's already a full URL, return as-is
+      if (userProfile.profile_picture.startsWith('http')) {
+        return userProfile.profile_picture;
+      }
+      // If it's a relative path, make it absolute
+      if (userProfile.profile_picture.startsWith('/media/')) {
+        return `http://localhost:8000${userProfile.profile_picture}`;
+      }
+      // If it doesn't start with /media/ or http, add the full base
+      return `http://localhost:8000${userProfile.profile_picture}`;
+    }
+    
+    return null;
+  };
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -41,6 +106,40 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
     setShowUserMenu(false);
     // You can add settings navigation here later
     console.log('Settings clicked');
+  };
+
+  // Profile Avatar Component
+  const ProfileAvatar = ({ size = 'sm', className = '' }) => {
+    const [imageError, setImageError] = useState(false);
+    const imageUrl = getProfileImageUrl();
+    
+    const sizeClasses = {
+      sm: 'h-8 w-8',
+      md: 'h-10 w-10',
+      lg: 'h-12 w-12'
+    };
+    
+    const iconSizes = {
+      sm: 'h-5 w-5',
+      md: 'h-6 w-6',
+      lg: 'h-7 w-7'
+    };
+
+    return (
+      <div className={`${sizeClasses[size]} rounded-full overflow-hidden bg-blue-100 flex items-center justify-center relative ${className}`}>
+        {imageUrl && !imageError ? (
+          <img
+            src={imageUrl}
+            alt="Profile"
+            className="h-full w-full object-cover"
+            onError={() => setImageError(true)}
+            onLoad={() => setImageError(false)}
+          />
+        ) : (
+          <User className={`${iconSizes[size]} text-blue-600`} />
+        )}
+      </div>
+    );
   };
 
   return (
@@ -81,9 +180,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
               className="flex items-center space-x-2 p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               disabled={isLoggingOut}
             >
-              <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center">
-                <User className="h-5 w-5 text-blue-600" />
-              </div>
+              <ProfileAvatar size="sm" />
               <div className="hidden sm:block text-left">
                 <p className="text-sm font-medium">
                   {user?.first_name} {user?.last_name}
@@ -107,9 +204,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
                   {/* User Info Header */}
                   <div className="px-4 py-3 border-b border-gray-100">
                     <div className="flex items-center space-x-3">
-                      <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <User className="h-6 w-6 text-blue-600" />
-                      </div>
+                      <ProfileAvatar size="md" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">
                           {user?.first_name} {user?.last_name}

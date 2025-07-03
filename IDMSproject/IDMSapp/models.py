@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 import os
 
 class Role(models.Model):
@@ -191,30 +192,202 @@ class Patient(models.Model):
     def __str__(self):
         return f"Patient: {self.user.get_full_name()}"        
             
+class DoctorSchedule(models.Model):
+    """
+    Defines doctor availability schedules at specific clinics
+    """
+    doctor = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='schedules',
+        limit_choices_to={'role__name__in': ['Doctor', 'Nurse']}
+    )
+    clinic = models.ForeignKey('Clinic', on_delete=models.CASCADE, related_name='doctor_schedules')
+    
+    DAYS_OF_WEEK = [
+        (0, 'Monday'),
+        (1, 'Tuesday'),
+        (2, 'Wednesday'),
+        (3, 'Thursday'),
+        (4, 'Friday'),
+        (5, 'Saturday'),
+        (6, 'Sunday'),
+    ]
+    
+    day_of_week = models.IntegerField(choices=DAYS_OF_WEEK)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    
+    # Appointment settings
+    appointment_duration = models.PositiveIntegerField(default=30, help_text="Duration in minutes")
+    max_patients_per_slot = models.PositiveIntegerField(default=1)
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    
+    # Special dates
+    effective_from = models.DateField(null=True, blank=True)
+    effective_until = models.DateField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def clean(self):
+        if self.start_time >= self.end_time:
+            raise ValidationError("Start time must be before end time")
+    
+    def __str__(self):
+        return f"Dr. {self.doctor.get_full_name()} - {self.get_day_of_week_display()} at {self.clinic.name}"
+    
+    class Meta:
+        unique_together = ['doctor', 'clinic', 'day_of_week', 'start_time']
+        ordering = ['doctor', 'day_of_week', 'start_time']
+
 class Appointment(models.Model):
     """
-    Patient appointment management
+    Enhanced appointment model with clinic support
     """
     STATUS_CHOICES = [
         ('P', 'Pending'),
         ('A', 'Approved'),
         ('C', 'Cancelled'),
         ('D', 'Completed'),
+        ('N', 'No Show'),
+        ('R', 'Rescheduled'),
     ]
     
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    healthcare_provider = models.ForeignKey(User, on_delete=models.CASCADE, limit_choices_to={'role__name__in': ['Doctor', 'Nurse']})
-    appointment_date = models.DateTimeField()
-    reason = models.TextField()
-    status = models.CharField(max_length=1, choices=STATUS_CHOICES, default='P')
-    notes = models.TextField(blank=True)
+    PRIORITY_CHOICES = [
+        ('L', 'Low'),
+        ('M', 'Medium'),
+        ('H', 'High'),
+        ('U', 'Urgent'),
+    ]
     
+    # Core appointment information
+    patient = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='patient_appointments',
+        limit_choices_to={'role__name': 'Patient'}
+    )
+    healthcare_provider = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='provider_appointments',
+        limit_choices_to={'role__name__in': ['Doctor', 'Nurse']}
+    )
+    clinic = models.ForeignKey('Clinic', on_delete=models.CASCADE, related_name='appointments')
+    
+    # Appointment details
+    appointment_date = models.DateTimeField()
+    duration = models.PositiveIntegerField(default=30, help_text="Duration in minutes")
+    reason = models.TextField()
+    notes = models.TextField(blank=True, help_text="Provider notes")
+    
+    # Status and priority
+    status = models.CharField(max_length=1, choices=STATUS_CHOICES, default='P')
+    priority = models.CharField(max_length=1, choices=PRIORITY_CHOICES, default='M')
+    
+    # Additional information
+    symptoms = models.TextField(blank=True)
+    diagnosis = models.TextField(blank=True)
+    treatment_plan = models.TextField(blank=True)
+    follow_up_required = models.BooleanField(default=False)
+    follow_up_date = models.DateField(null=True, blank=True)
+    
+    # Billing and insurance
+    consultation_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    insurance_claim_number = models.CharField(max_length=50, blank=True)
+    
+    # Reminders and notifications
+    reminder_sent = models.BooleanField(default=False)
+    confirmation_sent = models.BooleanField(default=False)
+    
+    # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='created_appointments'
+    )
+    
+    def clean(self):
+        """Validate appointment constraints"""
+        if self.appointment_date <= timezone.now():
+            raise ValidationError("Appointment must be scheduled for a future date and time")
+        
+        # Check for conflicts
+        conflicts = Appointment.objects.filter(
+            healthcare_provider=self.healthcare_provider,
+            appointment_date=self.appointment_date,
+            status__in=['P', 'A']
+        ).exclude(pk=self.pk)
+        
+        if conflicts.exists():
+            raise ValidationError("Provider already has an appointment at this time")
+    
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"Appointment for {self.patient.user.get_full_name()} on {self.appointment_date}"    
+        return f"{self.patient.get_full_name()} with Dr. {self.healthcare_provider.get_full_name()} on {self.appointment_date}"
     
+    @property
+    def is_upcoming(self):
+        return self.appointment_date > timezone.now() and self.status not in ['C', 'D']
+    
+    @property
+    def is_past_due(self):
+        return self.appointment_date < timezone.now() and self.status in ['P', 'A']
+    
+    @property
+    def end_time(self):
+        return self.appointment_date + timezone.timedelta(minutes=self.duration)
+    
+    def can_be_cancelled(self):
+        """Check if appointment can be cancelled (e.g., not too close to appointment time)"""
+        hours_until_appointment = (self.appointment_date - timezone.now()).total_seconds() / 3600
+        return hours_until_appointment >= 24 and self.status in ['P', 'A']
+    
+    def can_be_rescheduled(self):
+        """Check if appointment can be rescheduled"""
+        return self.status in ['P', 'A'] and not self.is_past_due
+    
+    def get_status_display_color(self):
+        """Return CSS color class for status"""
+        colors = {
+            'P': 'yellow',  # Pending
+            'A': 'green',   # Approved
+            'C': 'red',     # Cancelled
+            'D': 'blue',    # Completed
+            'N': 'gray',    # No Show
+            'R': 'orange',  # Rescheduled
+        }
+        return colors.get(self.status, 'gray')
+    
+    def get_priority_display_color(self):
+        """Return CSS color class for priority"""
+        colors = {
+            'L': 'green',   # Low
+            'M': 'yellow',  # Medium
+            'H': 'orange',  # High
+            'U': 'red',     # Urgent
+        }
+        return colors.get(self.priority, 'gray')
+    
+    class Meta:
+        ordering = ['-appointment_date']
+        indexes = [
+            models.Index(fields=['appointment_date']),
+            models.Index(fields=['status']),
+            models.Index(fields=['healthcare_provider', 'appointment_date']),
+            models.Index(fields=['patient', 'appointment_date']),
+            models.Index(fields=['clinic', 'appointment_date']),
+        ]
 class EmergencyAmbulanceRequest(models.Model):
     """
     Manages emergency ambulance requests

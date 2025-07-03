@@ -518,114 +518,109 @@ class PatientSerializer(serializers.ModelSerializer):
         model = Patient
         fields = '__all__'
         read_only_fields = ['created_at']
+class DoctorSerializer(serializers.ModelSerializer):
+    """Doctor info for selection"""
+    specialization = serializers.CharField(source='profile.specialization', read_only=True)
+    
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'specialization']
 
+class DoctorScheduleSerializer(serializers.ModelSerializer):
+    """Doctor schedule serializer"""
+    day_name = serializers.CharField(source='get_day_of_week_display', read_only=True)
+    
+    class Meta:
+        model = DoctorSchedule
+        fields = ['id', 'day_of_week', 'day_name', 'start_time', 'end_time', 'appointment_duration']
+
+# ======================== APPOINTMENT SERIALIZERS ========================
 class AppointmentCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating appointments"""
+    """Create appointment with clinic-first flow"""
     
     class Meta:
         model = Appointment
-        fields = ['healthcare_provider', 'appointment_date', 'reason']
-    
-    def validate_appointment_date(self, value):
-        """Validate appointment date is in the future"""
-        from django.utils import timezone
-        if value <= timezone.now():
-            raise serializers.ValidationError("Appointment date must be in the future")
-        return value
+        fields = ['clinic', 'healthcare_provider', 'appointment_date', 'reason', 'symptoms']
     
     def validate_healthcare_provider(self, value):
-        """Validate healthcare provider is a doctor or nurse"""
-        if not value.role or value.role.name not in ['Doctor', 'Nurse']:
-            raise serializers.ValidationError("Selected user is not a healthcare provider")
+        """Check if doctor works at selected clinic"""
+        clinic = self.initial_data.get('clinic')
+        if clinic and not value.clinics.filter(id=clinic).exists():
+            raise serializers.ValidationError("Doctor does not work at this clinic")
         return value
     
+    def validate_appointment_date(self, value):
+        """Check if appointment is in future"""
+        if value <= timezone.now():
+            raise serializers.ValidationError("Appointment must be in the future")
+        return value
+    
+    def validate(self, data):
+        """Check if time slot is available"""
+        doctor = data.get('healthcare_provider')
+        clinic = data.get('clinic')
+        appointment_date = data.get('appointment_date')
+        
+        # Check if doctor is available at this time
+        if doctor and clinic and appointment_date:
+            existing = Appointment.objects.filter(
+                healthcare_provider=doctor,
+                clinic=clinic,
+                appointment_date=appointment_date,
+                status__in=['P', 'A']
+            )
+            if existing.exists():
+                raise serializers.ValidationError("This time slot is already booked")
+        
+        return data
+    
     def create(self, validated_data):
-        """Create appointment with patient from request user"""
+        """Create appointment for current user"""
         request = self.context.get('request')
-        patient = request.user.patient
         return Appointment.objects.create(
-            patient=patient,
+            patient=request.user,
+            created_by=request.user,
             **validated_data
         )
 
-class AppointmentUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating appointments"""
+class AppointmentSerializer(serializers.ModelSerializer):
+    """Main appointment serializer"""
+    patient_name = serializers.CharField(source='patient.get_full_name', read_only=True)
+    doctor_name = serializers.CharField(source='healthcare_provider.get_full_name', read_only=True)
+    clinic_name = serializers.CharField(source='clinic.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Appointment
-        fields = ['healthcare_provider', 'appointment_date', 'reason', 'status', 'notes']
-        read_only_fields = ['notes']  # Only healthcare providers can add notes
+        fields = [
+            'id', 'patient_name', 'doctor_name', 'clinic_name',
+            'appointment_date', 'reason', 'symptoms', 'status', 'status_display',
+            'notes', 'diagnosis', 'created_at'
+        ]
+
+class AppointmentUpdateSerializer(serializers.ModelSerializer):
+    """Update appointment"""
     
-    def validate_appointment_date(self, value):
-        """Validate appointment date is in the future for pending appointments"""
-        from django.utils import timezone
-        instance = getattr(self, 'instance', None)
-        if instance and instance.status == 'P' and value <= timezone.now():
-            raise serializers.ValidationError("Appointment date must be in the future")
-        return value
+    class Meta:
+        model = Appointment
+        fields = ['appointment_date', 'reason', 'symptoms', 'status', 'notes', 'diagnosis']
     
     def validate_status(self, value):
-        """Validate status transitions"""
-        instance = getattr(self, 'instance', None)
+        """Check status change permissions"""
         request = self.context.get('request')
+        instance = self.instance
         
-        if not instance:
-            return value
-        
-        # Patients can only cancel their own pending appointments
+        # Patients can only cancel
         if request.user.role.name == 'Patient':
-            if instance.status != 'P':
-                raise serializers.ValidationError("Can only modify pending appointments")
-            if value not in ['P', 'C']:
+            if value != 'C':
                 raise serializers.ValidationError("Patients can only cancel appointments")
         
-        return value
-
-class AppointmentDetailSerializer(serializers.ModelSerializer):
-    """Detailed serializer for appointment display"""
-    patient = PatientSerializer(read_only=True)
-    healthcare_provider = UserSerializer(read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    can_edit = serializers.SerializerMethodField()
-    can_cancel = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = Appointment
-        fields = '__all__'
-    
-    def get_can_edit(self, obj):
-        """Check if current user can edit this appointment"""
-        request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return False
-        
-        # Patients can edit their own pending appointments
-        if request.user.role.name == 'Patient':
-            return obj.patient.user == request.user and obj.status == 'P'
-        
-        # Healthcare providers can edit appointments assigned to them
+        # Doctors can change any status
         if request.user.role.name in ['Doctor', 'Nurse']:
-            return obj.healthcare_provider == request.user
+            if instance.healthcare_provider != request.user:
+                raise serializers.ValidationError("You can only update your own appointments")
         
-        # Admins can edit any appointment
-        return request.user.role.name == 'Admin'
-    
-    def get_can_cancel(self, obj):
-        """Check if current user can cancel this appointment"""
-        request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return False
-        
-        # Can only cancel pending or approved appointments
-        if obj.status not in ['P', 'A']:
-            return False
-        
-        # Patients can cancel their own appointments
-        if request.user.role.name == 'Patient':
-            return obj.patient.user == request.user
-        
-        # Healthcare providers and admins can cancel any appointment
-        return request.user.role.name in ['Doctor', 'Nurse', 'Admin']
+        return value
 
 class DiseaseSerializer(serializers.ModelSerializer):
     """
