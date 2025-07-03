@@ -319,6 +319,192 @@ export const healthcareAPI = {
     create: (data) => api.post('/profiles/', data),
     update: (id, data) => api.patch(`/profiles/${id}/`, data),
     delete: (id) => api.delete(`/profiles/${id}/`),
+    
+    // Enhanced profile picture methods
+    getMyProfile: async () => {
+      try {
+        const response = await api.get('/profiles/me/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+    
+    updateMyProfile: async (data) => {
+      try {
+        const response = await api.patch('/profiles/me/', data);
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+    
+    uploadProfilePicture: async (file) => {
+      try {
+        const formData = new FormData();
+        formData.append('profile_picture', file);
+        
+        const response = await api.post('/profiles/me/upload-picture/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+    
+    removeProfilePicture: async () => {
+      try {
+        const response = await api.delete('/profiles/me/remove-picture/');
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+    
+    // Update profile with form data (including image)
+    updateProfileWithImage: async (formData) => {
+      try {
+        const response = await api.patch('/profiles/me/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        return response;
+      } catch (error) {
+        throw error;
+      }
+    },
+  },
+  
+  // Update the existing profile utility methods in apiUtils:
+  profile: {
+    get: async () => {
+      try {
+        const response = await healthcareAPI.profiles.getMyProfile();
+        return response.data;
+      } catch (error) {
+        // Fallback to old method if new endpoint doesn't exist
+        try {
+          const user = authAPI.getCurrentUser();
+          const response = await api.get(`/profiles/?user=${user?.id}`);
+          return response.data?.results?.[0] || response.data?.[0] || null;
+        } catch (fallbackError) {
+          throw new Error('Failed to fetch profile');
+        }
+      }
+    },
+    
+    getByUserId: (userId) => api.get(`/profiles/?user=${userId}`),
+    update: (id, data) => api.patch(`/profiles/${id}/`, data),
+    create: (data) => api.post('/profiles/', data),
+    
+    // Enhanced profile picture methods
+    uploadPicture: async (file) => {
+      try {
+        const response = await healthcareAPI.profiles.uploadProfilePicture(file);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    
+    removePicture: async () => {
+      try {
+        const response = await healthcareAPI.profiles.removeProfilePicture();
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    
+    updateWithImage: async (formData) => {
+      try {
+        const response = await healthcareAPI.profiles.updateProfileWithImage(formData);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    
+    // Legacy method for backward compatibility
+    updatePicture: async (profileId, file) => {
+      const formData = new FormData();
+      formData.append('profile_picture', file);
+      
+      return api.patch(`/profiles/${profileId}/`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+    },
+    
+    getCompleteProfile: async () => {
+      try {
+        const user = authAPI.getCurrentUser();
+        const [userResponse, profileResponse] = await Promise.allSettled([
+          api.get(`/users/${user?.id}/`),
+          healthcareAPI.profiles.getMyProfile()
+        ]);
+        
+        const userData = userResponse.status === 'fulfilled' ? userResponse.value.data : user;
+        const profileData = profileResponse.status === 'fulfilled' 
+          ? profileResponse.value.data
+          : null;
+        
+        return {
+          user: userData,
+          profile: profileData
+        };
+      } catch (error) {
+        throw new Error('Failed to fetch complete profile');
+      }
+    }
+  },
+  
+  // Add profile picture utility functions to apiUtils:
+  profilePictureUtils: {
+    // Validate image file before upload
+    validateImageFile: (file) => {
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      
+      if (!allowedTypes.includes(file.type)) {
+        throw new Error('Only JPEG, PNG, and GIF images are allowed');
+      }
+      
+      if (file.size > maxSize) {
+        throw new Error('Image file size cannot exceed 5MB');
+      }
+      
+      return true;
+    },
+    
+    // Create image preview URL
+    createPreviewUrl: (file) => {
+      return URL.createObjectURL(file);
+    },
+    
+    // Cleanup preview URL
+    revokePreviewUrl: (url) => {
+      URL.revokeObjectURL(url);
+    },
+    
+    // Get default profile image URL
+    getDefaultImageUrl: () => '/static/images/default-profile.png',
+    
+    // Format profile picture URL
+    formatProfilePictureUrl: (profile) => {
+      if (profile?.profile_picture_url) {
+        return profile.profile_picture_url;
+      }
+      if (profile?.profile_picture) {
+        return profile.profile_picture;
+      }
+      return apiUtils.profilePictureUtils.getDefaultImageUrl();
+    },
   },
 
   // Patient Management

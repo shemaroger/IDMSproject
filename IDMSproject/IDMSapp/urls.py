@@ -2,6 +2,7 @@
 # urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from django.conf.urls.static import static
 from .views import *
 
 router = DefaultRouter()
@@ -40,4 +41,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('auth/login/', AuthViewSet.as_view({'post': 'login'}), name='auth-login'),
     path('auth/register/', AuthViewSet.as_view({'post': 'register'}), name='auth-register'),
-]
+]  + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+

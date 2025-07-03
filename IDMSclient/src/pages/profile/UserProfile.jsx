@@ -1,7 +1,8 @@
 // src/pages/profile/UserProfile.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { healthcareAPI, apiUtils } from '../../services/api';
+import api from '../../services/api'; // Import the base api instance
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { 
   User, 
@@ -19,7 +20,10 @@ import {
   CheckCircle,
   FileText,
   Users,
-  Briefcase
+  Briefcase,
+  Upload,
+  Trash2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const UserProfile = () => {
@@ -27,13 +31,16 @@ const UserProfile = () => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState('personal');
+  const [imagePreview, setImagePreview] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   const [formData, setFormData] = useState({
-    // Personal Information
     first_name: '',
     last_name: '',
     email: '',
@@ -41,29 +48,118 @@ const UserProfile = () => {
     address: '',
     date_of_birth: '',
     gender: '',
-    
-    // Healthcare Information
     blood_group: '',
     allergies: '',
     chronic_conditions: '',
-    
-    // Professional Information (for healthcare workers)
     license_number: '',
     specialization: '',
   });
 
+  // Simple utility functions
+  const validateImageFile = (file) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    
+    if (!allowedTypes.includes(file.type)) {
+      throw new Error('Only JPEG, PNG, and GIF images are allowed');
+    }
+    
+    if (file.size > maxSize) {
+      throw new Error('Image file size cannot exceed 5MB');
+    }
+    
+    return true;
+  };
+
+  // State to track if image failed to load
+  const [imageError, setImageError] = useState(false);
+
+  // Memoized function to get profile image URL with debugging
+  const getProfileImageUrl = useCallback(() => {
+    if (imagePreview) {
+      return imagePreview;
+    }
+    
+    if (profile?.profile_picture_url) {
+      // Convert relative path to full URL
+      if (profile.profile_picture_url.startsWith('/media/')) {
+        return `http://localhost:8000${profile.profile_picture_url}`;
+      }
+      // If it's already a full URL, return as-is
+      if (profile.profile_picture_url.startsWith('http')) {
+        return profile.profile_picture_url;
+      }
+      // If it doesn't start with /media/ or http, add the full base
+      return `http://localhost:8000${profile.profile_picture_url}`;
+    }
+    
+    if (profile?.profile_picture) {
+      // If it's already a full URL, return as-is
+      if (profile.profile_picture.startsWith('http')) {
+        return profile.profile_picture;
+      }
+      // If it's a relative path, make it absolute
+      if (profile.profile_picture.startsWith('/media/')) {
+        return `http://localhost:8000${profile.profile_picture}`;
+      }
+      // If it doesn't start with /media/ or http, add the full base
+      return `http://localhost:8000${profile.profile_picture}`;
+    }
+    
+    return null;
+  }, [imagePreview, profile?.profile_picture, profile?.profile_picture_url]);
+
+  // Test if the image URL is accessible
+  const testImageUrl = async (url) => {
+    try {
+      const response = await fetch(url, { method: 'HEAD' });
+      console.log(`Image test for ${url}:`, response.status);
+      return response.ok;
+    } catch (error) {
+      console.log(`Image test failed for ${url}:`, error.message);
+      return false;
+    }
+  };
+
+  // Test the image when profile changes
+  useEffect(() => {
+    const imageUrl = getProfileImageUrl();
+    if (imageUrl && !imageUrl.startsWith('blob:')) {
+      console.log('Testing image URL:', imageUrl);
+      testImageUrl(imageUrl);
+    }
+  }, [getProfileImageUrl]);
+
+  // Reset image error when profile changes
+  useEffect(() => {
+    setImageError(false);
+  }, [profile?.profile_picture, profile?.profile_picture_url]);
+
   useEffect(() => {
     loadProfile();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
 
   const loadProfile = async () => {
     try {
       setLoading(true);
       setError('');
 
-      // Get user profile data
-      const profileResponse = await healthcareAPI.profiles.list({ user: currentUser?.id });
-      const profileData = profileResponse.data?.results?.[0] || profileResponse.data?.[0];
+      let profileData = null;
+      try {
+        const profileResponse = await healthcareAPI.profiles.getMyProfile();
+        profileData = profileResponse.data;
+      } catch (profileError) {
+        const profileResponse = await healthcareAPI.profiles.list({ user: currentUser?.id });
+        profileData = profileResponse.data?.results?.[0] || profileResponse.data?.[0];
+      }
 
       if (profileData) {
         setProfile(profileData);
@@ -82,7 +178,6 @@ const UserProfile = () => {
           specialization: profileData.specialization || '',
         });
       } else {
-        // Create a new profile if none exists
         const newProfile = await healthcareAPI.profiles.create({
           user: currentUser?.id,
           phone_number: '',
@@ -113,37 +208,140 @@ const UserProfile = () => {
     }));
   };
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      validateImageFile(file);
+      
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+      
+      const previewUrl = URL.createObjectURL(file);
+      setImagePreview(previewUrl);
+      setSelectedFile(file);
+      setError('');
+    } catch (error) {
+      setError(error.message);
+      setSelectedFile(null);
+      setImagePreview(null);
+    }
+  };
+
+  const handleUploadProfilePicture = async () => {
+    if (!selectedFile) return;
+
+    try {
+      setUploadingImage(true);
+      setError('');
+
+      const formData = new FormData();
+      formData.append('profile_picture', selectedFile);
+      
+      let response;
+      if (profile?.id) {
+        response = await api.patch(`/profiles/${profile.id}/`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        console.log('Upload response:', response.data); // Debug log
+      } else {
+        formData.append('user', currentUser?.id);
+        response = await api.post('/profiles/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        console.log('Create response:', response.data); // Debug log
+        setProfile(response.data);
+      }
+      
+      setSuccess('Profile picture updated successfully!');
+      setSelectedFile(null);
+      
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+        setImagePreview(null);
+      }
+      
+      // Force reload to get updated data
+      console.log('Reloading profile data...');
+      await loadProfile();
+      
+    } catch (error) {
+      console.error('Error uploading profile picture:', error);
+      console.error('Error response:', error.response?.data); // Debug log
+      setError(error.response?.data?.detail || error.response?.data?.error || 'Failed to upload profile picture');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveProfilePicture = async () => {
+    if (!profile?.profile_picture) return;
+
+    try {
+      setUploadingImage(true);
+      setError('');
+
+      const formData = new FormData();
+      formData.append('profile_picture', '');
+      
+      await api.patch(`/profiles/${profile.id}/`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      
+      setSuccess('Profile picture removed successfully!');
+      await loadProfile();
+      
+    } catch (error) {
+      console.error('Error removing profile picture:', error);
+      setError(error.response?.data?.detail || error.response?.data?.error || 'Failed to remove profile picture');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
       setError('');
       setSuccess('');
 
-      // Update user basic info
       await healthcareAPI.users.update(currentUser?.id, {
         first_name: formData.first_name,
         last_name: formData.last_name,
         email: formData.email,
       });
 
-      // Update profile
-      if (profile?.id) {
-        await healthcareAPI.profiles.update(profile.id, {
-          phone_number: formData.phone_number,
-          address: formData.address,
-          date_of_birth: formData.date_of_birth || null,
-          gender: formData.gender,
-          blood_group: formData.blood_group,
-          allergies: formData.allergies,
-          chronic_conditions: formData.chronic_conditions,
-          license_number: formData.license_number,
-          specialization: formData.specialization,
-        });
+      const profileData = {
+        phone_number: formData.phone_number,
+        address: formData.address,
+        date_of_birth: formData.date_of_birth || null,
+        gender: formData.gender,
+        blood_group: formData.blood_group,
+        allergies: formData.allergies,
+        chronic_conditions: formData.chronic_conditions,
+        license_number: formData.license_number,
+        specialization: formData.specialization,
+      };
+
+      try {
+        await healthcareAPI.profiles.updateMyProfile(profileData);
+      } catch (updateError) {
+        if (profile?.id) {
+          await healthcareAPI.profiles.update(profile.id, profileData);
+        }
       }
 
       setSuccess('Profile updated successfully!');
       setIsEditing(false);
-      await loadProfile(); // Reload to get fresh data
+      await loadProfile();
       
     } catch (error) {
       console.error('Error saving profile:', error);
@@ -157,7 +355,13 @@ const UserProfile = () => {
     setIsEditing(false);
     setError('');
     setSuccess('');
-    // Reset form data to original values
+    setSelectedFile(null);
+    
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+      setImagePreview(null);
+    }
+    
     if (profile) {
       setFormData({
         first_name: currentUser?.first_name || '',
@@ -195,14 +399,58 @@ const UserProfile = () => {
   return (
     <DashboardLayout>
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
+        {/* Header with Profile Picture */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center space-x-4">
-              <div className="h-16 w-16 bg-blue-100 rounded-full flex items-center justify-center">
-                <User className="h-8 w-8 text-blue-600" />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+            <div className="flex items-center space-x-6">
+              {/* Profile Picture Section */}
+              <div className="relative">
+                <div className="relative h-24 w-24 rounded-full overflow-hidden bg-blue-100 border-4 border-white shadow-lg">
+                  {/* Always show the default avatar as background */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <User className="h-12 w-12 text-blue-600" />
+                  </div>
+                  
+                  {/* Only show image if we have a URL and it hasn't failed */}
+                  {getProfileImageUrl() && !imageError && (
+                    <img
+                      src={getProfileImageUrl()}
+                      alt="Profile"
+                      className="absolute inset-0 h-full w-full object-cover z-10"
+                      onError={(e) => {
+                        console.log('Image failed to load:', e.target.src);
+                        console.log('Trying direct browser test...');
+                        console.log('Open this URL in a new tab to test:', e.target.src);
+                        setImageError(true);
+                      }}
+                      onLoad={(e) => {
+                        console.log('Image loaded successfully:', e.target.src);
+                        setImageError(false);
+                      }}
+                    />
+                  )}
+                </div>
+                
+                <div className="absolute -bottom-2 -right-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full shadow-lg transition-colors"
+                    title="Change profile picture"
+                  >
+                    <Camera className="h-4 w-4" />
+                  </button>
+                </div>
+                
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
               </div>
-              <div>
+              
+              <div className="flex-1">
                 <h1 className="text-2xl font-bold text-gray-900">
                   {currentUser?.first_name} {currentUser?.last_name}
                 </h1>
@@ -218,6 +466,7 @@ const UserProfile = () => {
                 </span>
               </div>
             </div>
+            
             <div className="flex gap-3">
               {!isEditing ? (
                 <button
@@ -248,6 +497,58 @@ const UserProfile = () => {
               )}
             </div>
           </div>
+
+          {/* Profile Picture Upload Section */}
+          {selectedFile && (
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <ImageIcon className="h-5 w-5 text-blue-600" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">New profile picture selected</p>
+                    <p className="text-xs text-blue-700">{selectedFile.name}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleUploadProfilePicture}
+                    disabled={uploadingImage}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-medium flex items-center disabled:opacity-50 transition-colors"
+                  >
+                    <Upload className="h-3 w-3 mr-1" />
+                    {uploadingImage ? 'Uploading...' : 'Upload'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedFile(null);
+                      if (imagePreview) {
+                        URL.revokeObjectURL(imagePreview);
+                        setImagePreview(null);
+                      }
+                    }}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm font-medium flex items-center transition-colors"
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Remove Picture Option */}
+          {profile?.profile_picture && !selectedFile && (
+            <div className="mt-4">
+              <button
+                onClick={handleRemoveProfilePicture}
+                disabled={uploadingImage}
+                className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center disabled:opacity-50 transition-colors"
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                {uploadingImage ? 'Removing...' : 'Remove profile picture'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Status Messages */}
@@ -275,357 +576,76 @@ const UserProfile = () => {
           </div>
         )}
 
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-          <div className="border-b border-gray-200">
-            <nav className="flex space-x-8 px-6">
-              <button
-                onClick={() => setActiveTab('personal')}
-                className={`py-4 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'personal' 
-                    ? 'border-blue-500 text-blue-600' 
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <User className="h-4 w-4 inline mr-2" />
-                Personal Info
-              </button>
-              
-              {isPatient && (
-                <button
-                  onClick={() => setActiveTab('health')}
-                  className={`py-4 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === 'health' 
-                      ? 'border-blue-500 text-blue-600' 
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <Heart className="h-4 w-4 inline mr-2" />
-                  Health Info
-                </button>
-              )}
-              
-              {isHealthcareWorker && (
-                <button
-                  onClick={() => setActiveTab('professional')}
-                  className={`py-4 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === 'professional' 
-                      ? 'border-blue-500 text-blue-600' 
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <Briefcase className="h-4 w-4 inline mr-2" />
-                  Professional
-                </button>
-              )}
-            </nav>
-          </div>
-
-          <div className="p-6">
-            {/* Personal Information Tab */}
-            {activeTab === 'personal' && (
-              <div className="space-y-6">
-                <h3 className="text-lg font-medium text-gray-900">Personal Information</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      First Name
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        name="first_name"
-                        value={formData.first_name}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.first_name || 'Not provided'}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Last Name
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        name="last_name"
-                        value={formData.last_name}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.last_name || 'Not provided'}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Mail className="h-4 w-4 inline mr-2" />
-                      Email Address
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="email"
-                        name="email"
-                        value={formData.email}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.email || 'Not provided'}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Phone className="h-4 w-4 inline mr-2" />
-                      Phone Number
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="tel"
-                        name="phone_number"
-                        value={formData.phone_number}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                        placeholder="+250 XXX XXX XXX"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.phone_number || 'Not provided'}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Calendar className="h-4 w-4 inline mr-2" />
-                      Date of Birth
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        name="date_of_birth"
-                        value={formData.date_of_birth}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">
-                        {formData.date_of_birth 
-                          ? new Date(formData.date_of_birth).toLocaleDateString() 
-                          : 'Not provided'
-                        }
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Gender
-                    </label>
-                    {isEditing ? (
-                      <select
-                        name="gender"
-                        value={formData.gender}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      >
-                        <option value="">Select Gender</option>
-                        <option value="M">Male</option>
-                        <option value="F">Female</option>
-                        <option value="O">Other</option>
-                        <option value="U">Prefer not to say</option>
-                      </select>
-                    ) : (
-                      <p className="text-gray-900 py-2">
-                        {formData.gender === 'M' ? 'Male' :
-                         formData.gender === 'F' ? 'Female' :
-                         formData.gender === 'O' ? 'Other' :
-                         formData.gender === 'U' ? 'Prefer not to say' :
-                         'Not provided'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <MapPin className="h-4 w-4 inline mr-2" />
-                    Address
-                  </label>
-                  {isEditing ? (
-                    <textarea
-                      name="address"
-                      value={formData.address}
-                      onChange={handleInputChange}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      placeholder="Enter your full address"
-                    />
-                  ) : (
-                    <p className="text-gray-900 py-2">{formData.address || 'Not provided'}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Health Information Tab (for Patients) */}
-            {activeTab === 'health' && isPatient && (
-              <div className="space-y-6">
-                <h3 className="text-lg font-medium text-gray-900">Health Information</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Heart className="h-4 w-4 inline mr-2" />
-                      Blood Group
-                    </label>
-                    {isEditing ? (
-                      <select
-                        name="blood_group"
-                        value={formData.blood_group}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      >
-                        <option value="">Select Blood Group</option>
-                        <option value="A+">A+</option>
-                        <option value="A-">A-</option>
-                        <option value="B+">B+</option>
-                        <option value="B-">B-</option>
-                        <option value="AB+">AB+</option>
-                        <option value="AB-">AB-</option>
-                        <option value="O+">O+</option>
-                        <option value="O-">O-</option>
-                      </select>
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.blood_group || 'Not provided'}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <Shield className="h-4 w-4 inline mr-2" />
-                    Allergies
-                  </label>
-                  {isEditing ? (
-                    <textarea
-                      name="allergies"
-                      value={formData.allergies}
-                      onChange={handleInputChange}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      placeholder="List any known allergies..."
-                    />
-                  ) : (
-                    <p className="text-gray-900 py-2">{formData.allergies || 'None reported'}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <FileText className="h-4 w-4 inline mr-2" />
-                    Chronic Conditions
-                  </label>
-                  {isEditing ? (
-                    <textarea
-                      name="chronic_conditions"
-                      value={formData.chronic_conditions}
-                      onChange={handleInputChange}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                      placeholder="List any chronic conditions or ongoing health issues..."
-                    />
-                  ) : (
-                    <p className="text-gray-900 py-2">{formData.chronic_conditions || 'None reported'}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Professional Information Tab (for Healthcare Workers) */}
-            {activeTab === 'professional' && isHealthcareWorker && (
-              <div className="space-y-6">
-                <h3 className="text-lg font-medium text-gray-900">Professional Information</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Shield className="h-4 w-4 inline mr-2" />
-                      License Number
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        name="license_number"
-                        value={formData.license_number}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                        placeholder="Professional license number"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.license_number || 'Not provided'}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      <Briefcase className="h-4 w-4 inline mr-2" />
-                      Specialization
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        name="specialization"
-                        value={formData.specialization}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                        placeholder="Medical specialization or area of expertise"
-                      />
-                    ) : (
-                      <p className="text-gray-900 py-2">{formData.specialization || 'Not provided'}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Account Information */}
+        {/* Simple Profile Form - Just Personal Info for now */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Account Information</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-6">Personal Information</h3>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <span className="font-medium text-gray-600">Account Status:</span>
-              <p className={`mt-1 inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                currentUser?.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-              }`}>
-                {currentUser?.is_active ? 'Active' : 'Inactive'}
-              </p>
+              <label className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
+              {isEditing ? (
+                <input
+                  type="text"
+                  name="first_name"
+                  value={formData.first_name}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                />
+              ) : (
+                <p className="text-gray-900 py-2">{formData.first_name || 'Not provided'}</p>
+              )}
             </div>
-            
+
             <div>
-              <span className="font-medium text-gray-600">Account Type:</span>
-              <p className="text-gray-900 mt-1">{currentUser?.is_staff ? 'Staff' : 'Regular User'}</p>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
+              {isEditing ? (
+                <input
+                  type="text"
+                  name="last_name"
+                  value={formData.last_name}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                />
+              ) : (
+                <p className="text-gray-900 py-2">{formData.last_name || 'Not provided'}</p>
+              )}
             </div>
-            
+
             <div>
-              <span className="font-medium text-gray-600">Member Since:</span>
-              <p className="text-gray-900 mt-1">
-                {currentUser?.date_joined 
-                  ? new Date(currentUser.date_joined).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })
-                  : 'Unknown'
-                }
-              </p>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Mail className="h-4 w-4 inline mr-2" />
+                Email Address
+              </label>
+              {isEditing ? (
+                <input
+                  type="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                />
+              ) : (
+                <p className="text-gray-900 py-2">{formData.email || 'Not provided'}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Phone className="h-4 w-4 inline mr-2" />
+                Phone Number
+              </label>
+              {isEditing ? (
+                <input
+                  type="tel"
+                  name="phone_number"
+                  value={formData.phone_number}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                  placeholder="+250 XXX XXX XXX"
+                />
+              ) : (
+                <p className="text-gray-900 py-2">{formData.phone_number || 'Not provided'}</p>
+              )}
             </div>
           </div>
         </div>
