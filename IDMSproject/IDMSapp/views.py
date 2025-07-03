@@ -797,6 +797,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             'count': doctors.count()
         })
 
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def doctor_availability(self, request):
         """Get doctor's availability for appointment booking"""
