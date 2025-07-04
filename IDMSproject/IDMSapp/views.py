@@ -739,9 +739,13 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         if user.role.name == 'Patient':
             # Patients see only their own appointments
             queryset = queryset.filter(patient=user)
-        elif user.role.name in ['Doctor', 'Nurse']:
-            # Healthcare providers see appointments assigned to them
+        elif user.role.name == 'Doctor':
+            # Doctors see appointments assigned to them
             queryset = queryset.filter(healthcare_provider=user)
+        elif user.role.name == 'Nurse':
+            # FIXED: Nurses see appointments at their clinics (not assigned to them)
+            nurse_clinics = user.clinics.all()
+            queryset = queryset.filter(clinic__in=nurse_clinics)
         # Admins see all appointments (no additional filtering)
         
         return queryset
@@ -796,6 +800,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             'doctors': serializer.data,
             'count': doctors.count()
         })
+
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def doctor_availability(self, request):
         """Get doctor's availability for appointment booking"""
@@ -983,122 +988,159 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def approve(self, request, pk=None):
         """Approve an appointment (NURSES ONLY)"""
-        appointment = self.get_object()
-        
-        # Check permissions - ONLY NURSES can approve
-        if request.user.role.name != 'Nurse':
+        try:
+            appointment = self.get_object()
+            
+            # Check permissions - ONLY NURSES can approve
+            if request.user.role.name != 'Nurse':
+                return Response(
+                    {'error': 'Only nurses can approve appointments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if nurse works at the same clinic
+            if not request.user.clinics.filter(id=appointment.clinic.id).exists():
+                return Response(
+                    {'error': 'You can only approve appointments at your clinic'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if appointment.status != 'P':
+                return Response(
+                    {'error': 'Only pending appointments can be approved'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update appointment status
+            appointment.status = 'A'
+            appointment.save()
+            
+            # Send notification
+            try:
+                self._send_status_change_notification(appointment, 'P')
+            except Exception as e:
+                print(f"Failed to send approval notification: {e}")
+            
+            return Response({
+                'message': 'Appointment approved successfully',
+                'appointment': AppointmentSerializer(appointment, context={'request': request}).data
+            })
+            
+        except Exception as e:
+            print(f"Error in approve action: {e}")
             return Response(
-                {'error': 'Only nurses can approve appointments'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f'Failed to approve appointment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        # Check if nurse works at the same clinic
-        if not request.user.clinics.filter(id=appointment.clinic.id).exists():
-            return Response(
-                {'error': 'You can only approve appointments at your clinic'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        if appointment.status != 'P':
-            return Response(
-                {'error': 'Only pending appointments can be approved'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        appointment.status = 'A'
-        appointment.save()
-        
-        self._send_status_change_notification(appointment, 'P')
-        
-        return Response({
-            'message': 'Appointment approved successfully',
-            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
-        })
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def cancel(self, request, pk=None):
         """Cancel an appointment"""
-        appointment = self.get_object()
-        
-        # Check permissions
-        can_cancel = False
-        user_role = request.user.role.name
-        
-        if user_role == 'Patient':
-            can_cancel = (appointment.patient == request.user and 
-                         appointment.can_be_cancelled())
-        elif user_role == 'Nurse':
-            can_cancel = request.user.clinics.filter(id=appointment.clinic.id).exists()
-        elif user_role == 'Doctor':
-            can_cancel = appointment.healthcare_provider == request.user
-        elif user_role == 'Admin':
-            can_cancel = True
-        
-        if not can_cancel:
+        try:
+            appointment = self.get_object()
+            
+            # Check permissions
+            can_cancel = False
+            user_role = request.user.role.name
+            
+            if user_role == 'Patient':
+                can_cancel = (appointment.patient == request.user and 
+                             appointment.can_be_cancelled())
+            elif user_role == 'Nurse':
+                can_cancel = request.user.clinics.filter(id=appointment.clinic.id).exists()
+            elif user_role == 'Doctor':
+                can_cancel = appointment.healthcare_provider == request.user
+            elif user_role == 'Admin':
+                can_cancel = True
+            
+            if not can_cancel:
+                return Response(
+                    {'error': 'You do not have permission to cancel this appointment'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if appointment.status in ['C', 'D']:
+                return Response(
+                    {'error': 'Cannot cancel completed or already cancelled appointments'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            old_status = appointment.status
+            appointment.status = 'C'
+            appointment.save()
+            
+            # Send notification
+            try:
+                self._send_status_change_notification(appointment, old_status)
+            except Exception as e:
+                print(f"Failed to send cancellation notification: {e}")
+            
+            return Response({
+                'message': 'Appointment cancelled successfully',
+                'appointment': AppointmentSerializer(appointment, context={'request': request}).data
+            })
+            
+        except Exception as e:
+            print(f"Error in cancel action: {e}")
             return Response(
-                {'error': 'You do not have permission to cancel this appointment'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f'Failed to cancel appointment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        if appointment.status in ['C', 'D']:
-            return Response(
-                {'error': 'Cannot cancel completed or already cancelled appointments'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        old_status = appointment.status
-        appointment.status = 'C'
-        appointment.save()
-        
-        self._send_status_change_notification(appointment, old_status)
-        
-        return Response({
-            'message': 'Appointment cancelled successfully',
-            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
-        })
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def complete(self, request, pk=None):
         """Mark appointment as completed (doctors only)"""
-        appointment = self.get_object()
-        
-        # Check permissions - only assigned doctor can complete
-        if request.user.role.name != 'Doctor':
+        try:
+            appointment = self.get_object()
+            
+            # Check permissions - only assigned doctor can complete
+            if request.user.role.name != 'Doctor':
+                return Response(
+                    {'error': 'Only doctors can complete appointments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if appointment.healthcare_provider != request.user:
+                return Response(
+                    {'error': 'You can only complete your own appointments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if appointment.status != 'A':
+                return Response(
+                    {'error': 'Only approved appointments can be completed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Optional fields from the provider
+            notes = request.data.get('notes', '')
+            diagnosis = request.data.get('diagnosis', '')
+            
+            if notes:
+                appointment.notes = notes
+            if diagnosis:
+                appointment.diagnosis = diagnosis
+            
+            appointment.status = 'D'
+            appointment.save()
+            
+            # Send notification
+            try:
+                self._send_status_change_notification(appointment, 'A')
+            except Exception as e:
+                print(f"Failed to send completion notification: {e}")
+            
+            return Response({
+                'message': 'Appointment completed successfully',
+                'appointment': AppointmentSerializer(appointment, context={'request': request}).data
+            })
+            
+        except Exception as e:
+            print(f"Error in complete action: {e}")
             return Response(
-                {'error': 'Only doctors can complete appointments'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f'Failed to complete appointment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        if appointment.healthcare_provider != request.user:
-            return Response(
-                {'error': 'You can only complete your own appointments'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        if appointment.status != 'A':
-            return Response(
-                {'error': 'Only approved appointments can be completed'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Optional fields from the provider
-        notes = request.data.get('notes', '')
-        diagnosis = request.data.get('diagnosis', '')
-        
-        if notes:
-            appointment.notes = notes
-        if diagnosis:
-            appointment.diagnosis = diagnosis
-        
-        appointment.status = 'D'
-        appointment.save()
-        
-        self._send_status_change_notification(appointment, 'A')
-        
-        return Response({
-            'message': 'Appointment completed successfully',
-            'appointment': AppointmentSerializer(appointment, context={'request': request}).data
-        })
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def pending_for_approval(self, request):
@@ -1239,42 +1281,55 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def bulk_approve(self, request):
         """Bulk approve appointments (nurses only)"""
-        if request.user.role.name != 'Nurse':
-            return Response(
-                {'error': 'Only nurses can bulk approve appointments'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        appointment_ids = request.data.get('appointment_ids', [])
-        if not appointment_ids:
-            return Response(
-                {'error': 'No appointment IDs provided'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get nurse's clinics
-        nurse_clinics = request.user.clinics.all()
-        
-        # Filter appointments that the nurse can approve
-        appointments = Appointment.objects.filter(
-            id__in=appointment_ids,
-            clinic__in=nurse_clinics,
-            status='P'
-        )
-        
-        approved_count = 0
-        for appointment in appointments:
-            appointment.status = 'A'
-            appointment.save()
+        try:
+            if request.user.role.name != 'Nurse':
+                return Response(
+                    {'error': 'Only nurses can bulk approve appointments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
-            # Send notification
-            self._send_status_change_notification(appointment, 'P')
-            approved_count += 1
-        
-        return Response({
-            'message': f'Successfully approved {approved_count} appointments',
-            'approved_count': approved_count
-        })
+            appointment_ids = request.data.get('appointment_ids', [])
+            if not appointment_ids:
+                return Response(
+                    {'error': 'No appointment IDs provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get nurse's clinics
+            nurse_clinics = request.user.clinics.all()
+            
+            # Filter appointments that the nurse can approve
+            appointments = Appointment.objects.filter(
+                id__in=appointment_ids,
+                clinic__in=nurse_clinics,
+                status='P'
+            )
+            
+            approved_count = 0
+            for appointment in appointments:
+                appointment.status = 'A'
+                appointment.save()
+                
+                # Send notification
+                try:
+                    self._send_status_change_notification(appointment, 'P')
+                except Exception as e:
+                    print(f"Failed to send bulk approval notification for appointment {appointment.id}: {e}")
+                
+                approved_count += 1
+            
+            return Response({
+                'success': True,
+                'message': f'Successfully approved {approved_count} appointments',
+                'approved_count': approved_count
+            })
+            
+        except Exception as e:
+            print(f"Error in bulk_approve action: {e}")
+            return Response(
+                {'error': f'Failed to bulk approve appointments: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 class DiseaseViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing diseases with symptom analysis capabilities

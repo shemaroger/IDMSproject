@@ -54,6 +54,20 @@ const AppointmentManagement = () => {
   const currentUser = authAPI.getCurrentUser();
   const isNurse = currentUser?.role?.name === 'Nurse';
 
+  // =========================== UTILITY FUNCTIONS ===========================
+  const getPriorityLevel = useCallback((appointment) => {
+    const appointmentDate = new Date(appointment.appointment_date);
+    const now = new Date();
+    const timeDiff = appointmentDate.getTime() - now.getTime();
+    const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
+
+    if (daysDiff < 0) return 'overdue';
+    if (daysDiff === 0) return 'today';
+    if (daysDiff === 1) return 'tomorrow';
+    if (daysDiff <= 3) return 'urgent';
+    return 'normal';
+  }, []);
+
   // =========================== MEMOIZED VALUES ===========================
   const stats = useMemo(() => {
     const today = new Date();
@@ -80,7 +94,7 @@ const AppointmentManagement = () => {
         return apt.status === 'P' && ['overdue', 'today', 'urgent'].includes(priority);
       }).length
     };
-  }, [appointments]);
+  }, [appointments, getPriorityLevel]);
 
   const filteredAndSortedAppointments = useMemo(() => {
     let filtered = appointments.filter(appointment => {
@@ -171,21 +185,7 @@ const AppointmentManagement = () => {
     });
 
     return filtered;
-  }, [appointments, searchTerm, statusFilter, dateFilter, sortBy, sortOrder]);
-
-  // =========================== UTILITY FUNCTIONS ===========================
-  const getPriorityLevel = useCallback((appointment) => {
-    const appointmentDate = new Date(appointment.appointment_date);
-    const now = new Date();
-    const timeDiff = appointmentDate.getTime() - now.getTime();
-    const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
-
-    if (daysDiff < 0) return 'overdue';
-    if (daysDiff === 0) return 'today';
-    if (daysDiff === 1) return 'tomorrow';
-    if (daysDiff <= 3) return 'urgent';
-    return 'normal';
-  }, []);
+  }, [appointments, searchTerm, statusFilter, dateFilter, sortBy, sortOrder, getPriorityLevel]);
 
   const getStatusIcon = useCallback((status) => {
     switch (status) {
