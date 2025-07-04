@@ -1,7 +1,7 @@
-// src/pages/emergency/EmergencyManagement.jsx - UPDATED WITH CLINIC SUPPORT
+// src/pages/emergency/EmergencyManagement.jsx
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import emergencyAmbulanceService from '../../services/emergencyAmbulanceService';
-import { authAPI, healthcareAPI } from '../../services/api';
+import { authAPI } from '../../services/api';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import {
   Ambulance,
@@ -34,8 +34,7 @@ import {
   Plus,
   Send,
   Map,
-  Crosshair,
-  Building
+  Crosshair
 } from 'lucide-react';
 
 const EmergencyManagement = () => {
@@ -43,7 +42,6 @@ const EmergencyManagement = () => {
   
   // Data states
   const [emergencyRequests, setEmergencyRequests] = useState([]);
-  const [clinics, setClinics] = useState([]);
   const [nearestHospitals, setNearestHospitals] = useState([]);
   const [stats, setStats] = useState({});
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -67,8 +65,7 @@ const EmergencyManagement = () => {
     location: '',
     gps_coordinates: '',
     condition_description: '',
-    suspected_disease: '',
-    clinic: ''
+    suspected_disease: ''
   });
   
   const [dispatchForm, setDispatchForm] = useState({
@@ -82,7 +79,6 @@ const EmergencyManagement = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [diseaseFilter, setDiseaseFilter] = useState('all');
-  const [clinicFilter, setClinicFilter] = useState('all');
   
   // User context
   const currentUser = authAPI.getCurrentUser();
@@ -102,8 +98,7 @@ const EmergencyManagement = () => {
           formatted.location.toLowerCase().includes(searchLower) ||
           formatted.condition.toLowerCase().includes(searchLower) ||
           formatted.suspectedDisease?.toLowerCase().includes(searchLower) ||
-          formatted.assignedAmbulance?.toLowerCase().includes(searchLower) ||
-          request.clinic_name?.toLowerCase().includes(searchLower);
+          formatted.assignedAmbulance?.toLowerCase().includes(searchLower);
         
         if (!matchesSearch) return false;
       }
@@ -123,14 +118,9 @@ const EmergencyManagement = () => {
         return false;
       }
       
-      // Clinic filter
-      if (clinicFilter !== 'all' && request.clinic !== parseInt(clinicFilter)) {
-        return false;
-      }
-      
       return true;
     });
-  }, [emergencyRequests, searchTerm, statusFilter, priorityFilter, diseaseFilter, clinicFilter]);
+  }, [emergencyRequests, searchTerm, statusFilter, priorityFilter, diseaseFilter]);
 
   const dashboardStats = useMemo(() => {
     const formatted = emergencyRequests.map(req => 
@@ -150,18 +140,6 @@ const EmergencyManagement = () => {
   }, [emergencyRequests]);
 
   // =========================== DATA FETCHING ===========================
-  
-  const fetchClinics = useCallback(async () => {
-    try {
-      const response = await healthcareAPI.clinics.list();
-      if (response.data) {
-        const clinicData = response.data.results || response.data;
-        setClinics(clinicData);
-      }
-    } catch (err) {
-      console.error('Error fetching clinics:', err);
-    }
-  }, []);
   
   const fetchEmergencyRequests = useCallback(async () => {
     try {
@@ -230,11 +208,6 @@ const EmergencyManagement = () => {
         } catch (locationError) {
           console.warn('Could not get location:', locationError);
         }
-      }
-      
-      // Add clinic ID if selected
-      if (requestData.clinic) {
-        requestData.clinic = parseInt(requestData.clinic);
       }
       
       const response = await emergencyAmbulanceService.createEmergencyRequest(requestData);
@@ -330,8 +303,7 @@ const EmergencyManagement = () => {
       location: '',
       gps_coordinates: '',
       condition_description: '',
-      suspected_disease: '',
-      clinic: ''
+      suspected_disease: ''
     });
   };
 
@@ -387,14 +359,13 @@ const EmergencyManagement = () => {
   
   useEffect(() => {
     fetchEmergencyRequests();
-    fetchClinics();
     fetchStats();
     fetchNearestHospitals();
     
     // Auto-refresh every 30 seconds for real-time updates
     const interval = setInterval(fetchEmergencyRequests, 30000);
     return () => clearInterval(interval);
-  }, [fetchEmergencyRequests, fetchClinics, fetchStats, fetchNearestHospitals]);
+  }, [fetchEmergencyRequests, fetchStats, fetchNearestHospitals]);
 
   // Auto-clear messages
   useEffect(() => {
@@ -464,7 +435,7 @@ const EmergencyManagement = () => {
             <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Search by patient, location, condition, clinic, or ambulance..."
+              placeholder="Search by patient, location, condition, or ambulance..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -495,19 +466,6 @@ const EmergencyManagement = () => {
             <option value="critical">Critical</option>
             <option value="urgent">Urgent</option>
             <option value="normal">Normal</option>
-          </select>
-          
-          <select
-            value={clinicFilter}
-            onChange={(e) => setClinicFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Clinics</option>
-            {clinics.map(clinic => (
-              <option key={clinic.id} value={clinic.id}>
-                {clinic.name}
-              </option>
-            ))}
           </select>
         </div>
       </div>
@@ -577,16 +535,6 @@ const EmergencyManagement = () => {
                   <Heart className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
                   <span className="text-gray-700">{formatted.condition}</span>
                 </div>
-
-                {/* Clinic Information */}
-                {request.clinic_name && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <Building className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Clinic:</strong> {request.clinic_name}
-                    </span>
-                  </div>
-                )}
 
                 {/* Suspected Disease */}
                 {formatted.suspectedDisease && (
@@ -769,6 +717,18 @@ const EmergencyManagement = () => {
           {/* Dashboard Statistics */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-6">
             <StatCard 
+              icon={Activity} 
+              title="Total" 
+              value={dashboardStats.total} 
+              color="blue" 
+            />
+            <StatCard 
+              icon={Clock} 
+              title="Pending" 
+              value={dashboardStats.pending} 
+              color="yellow" 
+            />
+            <StatCard 
               icon={Truck} 
               title="Dispatched" 
               value={dashboardStats.dispatched} 
@@ -808,25 +768,11 @@ const EmergencyManagement = () => {
               <div className="p-12 text-center">
                 <Ambulance className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">No emergency requests found</h3>
-                <p className="text-gray-600 mb-4">
-                  {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' || clinicFilter !== 'all'
-                    ? 'Try adjusting your filters to see more requests'
+                <p className="text-gray-600">
+                  {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all'
+                    ? 'Try adjusting your filters'
                     : 'No emergency requests at this time'}
                 </p>
-                {(searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' || clinicFilter !== 'all') && (
-                  <button
-                    onClick={() => {
-                      setSearchTerm('');
-                      setStatusFilter('all');
-                      setPriorityFilter('all');
-                      setDiseaseFilter('all');
-                      setClinicFilter('all');
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Clear All Filters
-                  </button>
-                )}
               </div>
             ) : (
               <div className="divide-y divide-gray-200">
@@ -886,24 +832,6 @@ const EmergencyManagement = () => {
                       placeholder="Latitude, Longitude (e.g., 40.7128,-74.0060)"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Clinic (Optional)
-                    </label>
-                    <select
-                      value={createForm.clinic}
-                      onChange={(e) => setCreateForm(prev => ({ ...prev, clinic: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select clinic (optional)</option>
-                      {clinics.map(clinic => (
-                        <option key={clinic.id} value={clinic.id}>
-                          {clinic.name}
-                        </option>
-                      ))}
-                    </select>
                   </div>
 
                   <div>
@@ -1130,22 +1058,6 @@ const EmergencyManagement = () => {
                             )}
                           </div>
                         </div>
-
-                        {/* Clinic Information */}
-                        {selectedRequest.clinic_name && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Clinic</label>
-                            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                              <div className="bg-purple-100 p-2 rounded-lg">
-                                <Building className="h-5 w-5 text-purple-600" />
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-900">{selectedRequest.clinic_name}</p>
-                                <p className="text-sm text-gray-600">Associated Clinic</p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
 
                         {/* Condition Description */}
                         <div>

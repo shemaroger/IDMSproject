@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-w9z+fzaz2_g@7!5hcctr92)f1)bg4*dy#-*lr8nl7f(iq41e(%
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*'] 
 
 
 # Application definition
@@ -115,6 +115,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React/Vue
     "http://127.0.0.1:8000",
     "http://localhost:5173",
+    "http://localhost:19006",
+    "http://192.168.8.107:8000",  # Example IP address
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [

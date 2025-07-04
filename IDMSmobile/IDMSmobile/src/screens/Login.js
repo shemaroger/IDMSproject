@@ -1,98 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
-  KeyboardAvoidingView,
-  Platform,
-  Image,
-  ActivityIndicator,
-  Alert,
-  Animated
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import ApiService from '../services/api';
-import theme from '../constants/theme';
+import { MaterialIcons } from '@expo/vector-icons';
 
-const LoginScreen = ({ navigation }) => {
-  const [formData, setFormData] = useState({
-    username: '',
-    password: '',
-  });
-  const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
+const Login = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideUpAnim = useRef(new Animated.Value(30)).current;
+  const navigation = useNavigation();
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 1000,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideUpAnim, {
-        toValue: 0,
-        duration: 800,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
-
-  const validateForm = () => {
-    const newErrors = {};
-    
-    if (!formData.username.trim()) newErrors.username = 'Username is required';
-    if (!formData.password) newErrors.password = 'Password is required';
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const handleLogin = () => {
+    // Your login logic here
+    navigation.navigate('Dashboard');
   };
-
-  const handleLogin = async () => {
-  if (!validateForm()) return;
-
-  setLoading(true);
-  
-  try {
-    console.log('Attempting login with:', {
-      username: formData.username.trim(),
-      password: formData.password
-    });
-
-    const response = await ApiService.login({
-      username: formData.username.trim(),
-      password: formData.password
-    });
-
-    console.log('Login response:', response);
-
-    if (response.success) {
-      if (response.user.role === 'user') {
-        navigation.replace('Dashboard');
-      } else {
-        navigation.replace('Dashboard', { 
-          userId: response.user.id,
-          meterNumber: response.user.meter_number 
-        });
-      }
-    } else {
-      Alert.alert('Login Failed', response.error || 'Unknown error occurred');
-    }
-  } catch (error) {
-    console.error('Login error:', error);
-    Alert.alert(
-      'Login Failed', 
-      error.message || 'Could not connect to server. Please try again.'
-    );
-  } finally {
-    setLoading(false);
-  }
-};
 
   return (
     <KeyboardAvoidingView
@@ -100,136 +21,78 @@ const LoginScreen = ({ navigation }) => {
       style={styles.container}
     >
       <LinearGradient
-        colors={[theme.colors.primary, theme.colors.secondary]}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
+        colors={['#e3f2fd', '#bbdefb', '#90caf9']}
+        style={styles.gradient}
       >
-        <Animated.View style={{ opacity: fadeAnim }}>
+        <View style={styles.logoContainer}>
           <Image 
-            source={require('../../assets/logo.png')} 
+            source={require('../assets/medical-bg.png')} 
             style={styles.logo}
-            resizeMode="contain"
           />
-        </Animated.View>
-        <Animated.Text style={[styles.title, { opacity: fadeAnim }]}>
-          CashPower Login
-        </Animated.Text>
-        <Animated.Text style={[styles.subtitle, { opacity: fadeAnim }]}>
-          Sign in to manage your electricity account
-        </Animated.Text>
-      </LinearGradient>
-
-      <Animated.View 
-        style={[
-          styles.formContainer,
-          { 
-            transform: [{ translateY: slideUpAnim }],
-            opacity: fadeAnim
-          }
-        ]}
-      >
-        {/* Username Input */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Username</Text>
-          <View style={[
-            styles.inputContainer, 
-            errors.username && styles.errorInput
-          ]}>
-            <Ionicons 
-              name="person-outline" 
-              size={20} 
-              color={errors.username ? theme.colors.danger : theme.colors.text} 
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your username"
-              placeholderTextColor={theme.colors.text + '80'}
-              value={formData.username}
-              onChangeText={(text) => {
-                setFormData({...formData, username: text});
-                if (errors.username) setErrors({...errors, username: ''});
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-          {errors.username && (
-            <Text style={styles.errorText}>{errors.username}</Text>
-          )}
+          <Text style={styles.appName}>HealthCare</Text>
         </View>
 
-        {/* Password Input */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Password</Text>
-          <View style={[
-            styles.inputContainer, 
-            errors.password && styles.errorInput
-          ]}>
-            <Ionicons 
-              name="lock-closed-outline" 
-              size={20} 
-              color={errors.password ? theme.colors.danger : theme.colors.text} 
-            />
+        <View style={styles.formContainer}>
+          <Text style={styles.welcomeText}>Welcome Back</Text>
+          <Text style={styles.subText}>Please sign in to continue</Text>
+
+          <View style={styles.inputContainer}>
+            <MaterialIcons name="email" size={20} color="#5c6bc0" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="Enter your password"
-              placeholderTextColor={theme.colors.text + '80'}
-              value={formData.password}
-              onChangeText={(text) => {
-                setFormData({...formData, password: text});
-                if (errors.password) setErrors({...errors, password: ''});
-              }}
+              placeholder="Email Address"
+              placeholderTextColor="#999"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <MaterialIcons name="lock" size={20} color="#5c6bc0" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#999"
+              value={password}
+              onChangeText={setPassword}
               secureTextEntry={!showPassword}
             />
             <TouchableOpacity 
+              style={styles.eyeIcon} 
               onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeIcon}
             >
-              <Ionicons 
-                name={showPassword ? "eye-off-outline" : "eye-outline"} 
+              <MaterialIcons 
+                name={showPassword ? "visibility" : "visibility-off"} 
                 size={20} 
-                color={errors.password ? theme.colors.danger : theme.colors.text} 
+                color="#5c6bc0" 
               />
             </TouchableOpacity>
           </View>
-          {errors.password && (
-            <Text style={styles.errorText}>{errors.password}</Text>
-          )}
-        </View>
 
-        {/* Forgot Password */}
-        <TouchableOpacity 
-          style={styles.forgotPassword}
-          onPress={() => navigation.navigate('ForgotPassword')}
-        >
-          <Text style={styles.linkText}>Forgot Password?</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+            <Text style={styles.loginButtonText}>Sign In</Text>
+          </TouchableOpacity>
 
-        {/* Login Button */}
-        <TouchableOpacity 
-          style={[
-            styles.loginButton,
-            loading && styles.buttonDisabled
-          ]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Login</Text>
-          )}
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.forgotPassword}>
+            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+          </TouchableOpacity>
 
-        {/* Signup Link */}
-        <View style={styles.signupContainer}>
-          <Text style={styles.signupText}>Don't have an account?</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-            <Text style={styles.signupLink}> Register Meter</Text>
+          <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity 
+            style={styles.signupButton}
+            onPress={() => navigation.navigate('Signup')}
+          >
+            <Text style={styles.signupButtonText}>Create New Account</Text>
           </TouchableOpacity>
         </View>
-      </Animated.View>
+      </LinearGradient>
     </KeyboardAvoidingView>
   );
 };
@@ -237,118 +100,121 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.light,
   },
-  header: {
+  gradient: {
+    flex: 1,
+    justifyContent: 'center',
     paddingHorizontal: 30,
-    paddingTop: 50,
-    paddingBottom: 80,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 40,
   },
   logo: {
     width: 80,
     height: 80,
-    alignSelf: 'center',
     marginBottom: 15,
   },
-  title: {
-    fontSize: 28,
+  appName: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: theme.colors.white,
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: theme.colors.white,
-    opacity: 0.9,
-    textAlign: 'center',
+    color: '#3949ab',
   },
   formContainer: {
-    flex: 1,
-    paddingHorizontal: 30,
-    marginTop: -30,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
   },
-  inputGroup: {
-    marginBottom: 20,
+  welcomeText: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#3949ab',
+    marginBottom: 5,
+    textAlign: 'center',
   },
-  label: {
+  subText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.text,
-    marginBottom: 8,
+    color: '#666',
+    marginBottom: 25,
+    textAlign: 'center',
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.white,
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.light,
-    ...theme.shadow,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    marginBottom: 25,
+    paddingBottom: 5,
   },
-  errorInput: {
-    borderColor: theme.colors.danger,
+  inputIcon: {
+    marginRight: 10,
   },
   input: {
     flex: 1,
-    marginLeft: 10,
-    color: theme.colors.text,
+    height: 40,
+    color: '#333',
     fontSize: 16,
-    paddingVertical: 0,
   },
   eyeIcon: {
     padding: 5,
   },
-  errorText: {
-    color: theme.colors.danger,
-    fontSize: 12,
-    marginTop: 5,
-    marginLeft: 5,
-  },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    marginTop: -10,
-    marginBottom: 20,
-  },
-  linkText: {
-    color: theme.colors.primary,
-    fontSize: 14,
-    fontWeight: '500',
-  },
   loginButton: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#5c6bc0',
+    borderRadius: 25,
+    paddingVertical: 15,
     alignItems: 'center',
-    justifyContent: 'center',
     marginTop: 10,
-    ...theme.shadow,
+    shadowColor: '#5c6bc0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
   },
-  buttonDisabled: {
-    opacity: 0.7,
-  },
-  buttonText: {
-    color: theme.colors.white,
+  loginButtonText: {
+    color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  signupContainer: {
+  forgotPassword: {
+    alignSelf: 'center',
+    marginTop: 15,
+  },
+  forgotPasswordText: {
+    color: '#5c6bc0',
+    fontSize: 14,
+  },
+  dividerContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 'auto',
-    marginBottom: 30,
+    alignItems: 'center',
+    marginVertical: 25,
   },
-  signupText: {
-    color: theme.colors.text,
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e0e0e0',
   },
-  signupLink: {
-    color: theme.colors.primary,
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#999',
+    fontSize: 12,
+  },
+  signupButton: {
+    borderWidth: 1,
+    borderColor: '#5c6bc0',
+    borderRadius: 25,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  signupButtonText: {
+    color: '#5c6bc0',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });
 
-export default LoginScreen;
+export default Login;

@@ -1,325 +1,265 @@
+// src/services/api.js
 import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 
-// Configure your API base URL - use your actual local IP
-const BASE_URL = 'http://192.168.8.107:5000/api';
-const TIMEOUT = 15000;
-
-// Create axios instance with default config
+// Base API configuration
 const api = axios.create({
-  baseURL: BASE_URL,
-  timeout: TIMEOUT,
+  baseURL: 'http://192.168.8.107:8000/api/', // Replace with your Django server URL
+  timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-  },
-  withCredentials: true // Important for session cookies
+  }
 });
 
-// Request interceptor
-api.interceptors.request.use(
-  (config) => {
-    console.log('Making request to:', config.url, config.data || config.params);
-    return config;
-  },
-  (error) => {
-    console.error('Request error:', error);
-    return Promise.reject({
-      message: 'Request failed to send',
-      details: error.message,
-      isNetworkError: true
-    });
-  }
-);
-
-// Response interceptor
-api.interceptors.response.use(
-  (response) => {
-    console.log('Response from:', response.config.url, response.data);
-    return response.data;
-  },
-  (error) => {
-    const errorResponse = error.response || {};
-    const errorMessage = errorResponse.data?.error || 
-                        errorResponse.statusText || 
-                        error.message || 
-                        'Unknown error occurred';
-
-    console.error('API Error:', {
-      url: error.config?.url,
-      status: errorResponse.status,
-      message: errorMessage,
-      data: errorResponse.data
-    });
-
-    // Enhance error object
-    const enhancedError = {
-      message: errorMessage,
-      status: errorResponse.status,
-      data: errorResponse.data,
-      isNetworkError: !error.response
-    };
-
-    // Handle specific status codes
-    if (errorResponse.status === 401) {
-      // Handle unauthorized (you might want to redirect to login)
-      enhancedError.isUnauthorized = true;
-    }
-
-    return Promise.reject(enhancedError);
-  }
-);
-
-const ApiService = {
-  // Auth endpoints
-  login: async (credentials) => {
-    try {
-      const response = await api.post('/login', credentials);
-      
-      if (response.success) {
-        return response;
-      } else {
-        throw new Error(response.error || 'Login failed');
-      }
-    } catch (error) {
-      console.error('Login error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      throw error;
-    }
-  },
-
-  register: async (userData) => {
-    try {
-      const response = await api.post('/register', userData);
-      
-      if (response.success) {
-        return response;
-      } else {
-        // Handle validation errors specifically
-        if (response.missing_fields) {
-          throw {
-            ...response,
-            isValidationError: true
-          };
-        }
-        throw new Error(response.error || 'Registration failed');
-      }
-    } catch (error) {
-      console.error('Registration error:', error);
-      throw error;
-    }
-  },
-
-  logout: async () => {
-    try {
-      await api.post('/logout');
-      return true;
-    } catch (error) {
-      console.error('Logout error:', error);
-      return false;
-    }
-  },
-
-  // Meter endpoints
-  checkMeter: async (meterNumber) => {
-    try {
-      const response = await api.get('/check_meter', { 
-        params: { meter_number: meterNumber },
-        timeout: 5000
-      });
-      return response;
-    } catch (error) {
-      console.error('Check meter error:', error);
-      throw error;
-    }
-  },
-
-  // Power management endpoints
-  getLatestReading: async (meterNumber) => {
-    try {
-      const response = await api.get(`/latest-reading/${meterNumber}`);
-      return response;
-    } catch (error) {
-      console.error('Get reading error:', error);
-      throw error;
-    }
-  },
-
-  // Meter Report endpoint (now uses the logged-in user's meter)
-getMeterReport: async () => {
+// Add auth token to requests if available
+api.interceptors.request.use(async (config) => {
   try {
-    const response = await api.get('/api/port_report');
-    
-    if (!response.data.success) {
-      return {
-        success: false,
-        error: response.data.error || 'Failed to fetch meter report',
-        status: response.status
-      };
+    const token = await SecureStore.getItemAsync('authToken');
+    if (token) {
+      config.headers.Authorization = `Token ${token}`;
     }
-
-    // Transform response to consistent format
-    return {
-      success: true,
-      data: {
-        meterNumber: response.data.meter_number,
-        latestPurchasedPower: response.data.latest_purchased_power,
-        currentPower: response.data.current_power,
-        consumedPower: response.data.consumed_power,
-        purchasedDate: response.data.purchased_date,
-        latestReadingDate: response.data.latest_date
-      }
-    };
   } catch (error) {
-    console.error('Meter report error:', error);
-    
-    // Handle different error response formats
-    const errorData = error.response?.data;
-    return {
-      success: false,
-      error: errorData?.error || error.message || 'Failed to fetch meter report',
-      status: error.response?.status
-    };
+    console.error('Error retrieving auth token:', error);
   }
-},
+  return config;
+});
 
-  buyElectricity: async (purchaseData) => {
+// Response interceptor for better error handling
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid, remove it
+      try {
+        await SecureStore.deleteItemAsync('authToken');
+      } catch (e) {
+        console.error('Error removing invalid token:', e);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// API endpoints
+const AuthAPI = {
+  /**
+   * Patient Login
+   * @param {string} email 
+   * @param {string} password 
+   * @returns {Promise} Axios response
+   */
+  async login(email, password) {
     try {
-      const response = await api.post('/buy-electricity', purchaseData);
+      const response = await api.post('/auth/login/', {
+        email,
+        password
+      });
+      
+      // Store token securely
+      if (response.data.token) {
+        await SecureStore.setItemAsync('authToken', response.data.token);
+      }
+      
       return response.data;
     } catch (error) {
-      // Enhance error message
-      if (error.response) {
-        error.message = error.response.data?.error || error.message;
+      console.error('Login error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Patient Registration
+   * @param {object} userData - Patient registration data
+   * @returns {Promise} Axios response
+   */
+  async register(userData) {
+    try {
+      // Ensure role is set to Patient
+      const data = {
+        ...userData,
+        role: 'Patient' // Force Patient role for registration
+      };
+      
+      const response = await api.post('/auth/register/', data);
+      
+      // Store token if registration includes auto-login
+      if (response.data.token) {
+        await SecureStore.setItemAsync('authToken', response.data.token);
       }
+      
+      return response.data;
+    } catch (error) {
+      console.error('Registration error:', error.response?.data || error.message);
       throw error;
     }
   },
 
-  updateConsumption: async (meterData) => {
+  /**
+   * Get current patient profile
+   * @returns {Promise} Axios response
+   */
+  async getProfile() {
     try {
-      const response = await api.post('/update_consumption', meterData);
-      return response;
+      const response = await api.get('/auth/profile/');
+      return response.data;
     } catch (error) {
-      console.error('Update consumption error:', error);
+      console.error('Profile fetch error:', error.response?.data || error.message);
       throw error;
     }
   },
 
- relayControl: async (state) => {
-  try {
-    const response = await api.post('/api/relay_control', { state });
-    return response.data;
-  } catch (error) {
-    console.error('Relay control error:', error);
-    // Extract server error message if available
-    const errorMessage = error.response?.data?.error || 'Failed to control relay';
-    throw new Error(errorMessage);
-  }
-},
-  // =====================
-  // TRANSACTION ENDPOINTS
-  // =====================
-  createTransaction: async (meterNumber, amount) => {
+  /**
+   * Update patient profile
+   * @param {object} profileData - Profile data to update
+   * @returns {Promise} Axios response
+   */
+  async updateProfile(profileData) {
     try {
-      const response = await api.post('/transactions', {
-        meter_number: meterNumber,
-        amount: parseFloat(amount)
+      const response = await api.put('/auth/profile/', profileData);
+      return response.data;
+    } catch (error) {
+      console.error('Profile update error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Logout current user
+   * @returns {Promise} 
+   */
+  async logout() {
+    try {
+      // Remove token from secure storage
+      await SecureStore.deleteItemAsync('authToken');
+      
+      // Optionally call backend logout endpoint
+      await api.post('/auth/logout/');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Logout error:', error.response?.data || error.message);
+      // Don't throw on logout error, just log it
+      return { success: false };
+    }
+  },
+
+  /**
+   * Forgot password request
+   * @param {string} email 
+   * @returns {Promise} 
+   */
+  async forgotPassword(email) {
+    try {
+      const response = await api.post('/auth/forgot_password/', { email });
+      return response.data;
+    } catch (error) {
+      console.error('Forgot password error:', error.response?.data || error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Change password
+   * @param {string} oldPassword 
+   * @param {string} newPassword 
+   * @returns {Promise} 
+   */
+  async changePassword(oldPassword, newPassword) {
+    try {
+      const response = await api.post('/auth/change_password/', {
+        old_password: oldPassword,
+        new_password: newPassword
       });
-      return {
-        success: true,
-        transaction: response.transaction,
-        message: response.message || 'Transaction completed successfully'
-      };
+      return response.data;
     } catch (error) {
-      throw {
-        ...error,
-        message: error.message || 'Failed to create transaction'
-      };
-    }
-  },
-
-  getTransactions: async (params = {}) => {
-    try {
-      const response = await api.get('/transactions', { params });
-      return {
-        success: true,
-        transactions: response.transactions || [],
-        pagination: response.pagination
-      };
-    } catch (error) {
-      throw {
-        ...error,
-        message: error.message || 'Failed to fetch transactions'
-      };
-    }
-  },
-
-  getTransaction: async (transactionId) => {
-    try {
-      const response = await api.get(`/transactions/${transactionId}`);
-      return {
-        success: true,
-        transaction: response.transaction
-      };
-    } catch (error) {
-      throw {
-        ...error,
-        message: error.message || 'Failed to fetch transaction'
-      };
-    }
-  },
-
-  // =================
-  // METER ENDPOINTS
-  // =================
-  checkMeter: async (meterNumber) => {
-    try {
-      const response = await api.get('/check_meter', { 
-        params: { meter_number: meterNumber }
-      });
-      return {
-        success: true,
-        exists: response.exists,
-        user: response.user || null
-      };
-    } catch (error) {
-      throw {
-        ...error,
-        message: error.message || 'Failed to check meter number'
-      };
-    }
-  },
-
-  getMeterDetails: async (meterNumber) => {
-    try {
-      const response = await api.get(`/meter/${meterNumber}`);
-      return {
-        success: true,
-        meter: response.meter,
-        current_power: response.current_power,
-        user: response.user || null
-      };
-    } catch (error) {
-      throw {
-        ...error,
-        message: error.message || 'Failed to get meter details'
-      };
-    }
-  },
-
-
-  // Utility methods
-  checkNetwork: async () => {
-    try {
-      await axios.get(BASE_URL, { timeout: 3000 });
-      return true;
-    } catch (error) {
-      return false;
+      console.error('Change password error:', error.response?.data || error.message);
+      throw error;
     }
   }
 };
 
-export default ApiService;
+// Utility functions for error handling
+const apiUtils = {
+  /**
+   * Format error message from API response
+   * @param {Error} error 
+   * @returns {string} Formatted error message
+   */
+  formatErrorMessage(error) {
+    if (error.response?.data) {
+      const errorData = error.response.data;
+      
+      // Handle different error response formats
+      if (typeof errorData === 'string') {
+        return errorData;
+      }
+      
+      if (errorData.message) {
+        return errorData.message;
+      }
+      
+      if (errorData.error) {
+        return errorData.error;
+      }
+      
+      if (errorData.detail) {
+        return errorData.detail;
+      }
+      
+      // Handle validation errors
+      if (errorData.errors) {
+        const firstError = Object.values(errorData.errors)[0];
+        return Array.isArray(firstError) ? firstError[0] : firstError;
+      }
+      
+      // Handle field-specific errors
+      const fieldErrors = Object.keys(errorData).filter(key => 
+        Array.isArray(errorData[key]) && errorData[key].length > 0
+      );
+      
+      if (fieldErrors.length > 0) {
+        const firstField = fieldErrors[0];
+        return `${firstField}: ${errorData[firstField][0]}`;
+      }
+    }
+    
+    // Network or other errors
+    if (error.message) {
+      return error.message;
+    }
+    
+    return 'An unexpected error occurred. Please try again.';
+  },
+
+  /**
+   * Check if user is authenticated
+   * @returns {Promise<boolean>}
+   */
+  async isAuthenticated() {
+    try {
+      const token = await SecureStore.getItemAsync('authToken');
+      return !!token;
+    } catch (error) {
+      console.error('Error checking authentication:', error);
+      return false;
+    }
+  },
+
+  /**
+   * Get stored auth token
+   * @returns {Promise<string|null>}
+   */
+  async getAuthToken() {
+    try {
+      return await SecureStore.getItemAsync('authToken');
+    } catch (error) {
+      console.error('Error getting auth token:', error);
+      return null;
+    }
+  }
+};
+
+// Export both the AuthAPI and utilities
+export default AuthAPI;
+export { apiUtils, api };

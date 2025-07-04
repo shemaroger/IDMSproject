@@ -19,6 +19,7 @@ import AppointmentManagement from './pages/nurse/AppointmentManagement';
 
 // Patient pages
 import EmergencyAmbulanceRequest from './pages/patient/EmergencyAmbulanceRequest';
+import EmergencyApproval from './pages/emergency/EmergencyApproval';
 
 // Nurse pages
 import NurseAppointmentManagement from './pages/nurse/AppointmentManagement';
@@ -111,7 +112,7 @@ function App() {
             } />
             <Route path="/nurse/emergency" element={
               <NurseRoute>
-                <EmergencyAmbulanceRequest/>
+                <EmergencyApproval/>
               </NurseRoute>
             } />
             <Route path="/nurse/vitals" element={
