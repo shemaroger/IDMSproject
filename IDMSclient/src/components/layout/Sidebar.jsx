@@ -25,6 +25,7 @@ import {
   Bell,
   ClipboardList,
   UserCog,
+  Clock,
   MessageSquare
 } from 'lucide-react';
 
@@ -69,14 +70,14 @@ const getNavigationItems = (userRole) => {
         icon: Shield
       },
       {
-        name: 'Medications',
-        href: '/patient/medications',
+        name: 'Diagnoses',
+        href: '/patient/diagnoses',
         icon: Pill
       },
       {
-        name: 'Family Health',
-        href: '/patient/family',
-        icon: Users
+        name: 'Symptom History',
+        href: '/patient/symptom-history',
+        icon: Clock
       }
     ],
 
@@ -88,14 +89,14 @@ const getNavigationItems = (userRole) => {
         badge: '24'
       },
       {
-        name: 'Appointments',
-        href: '/doctor/appointments',
+        name: 'Clinic Sessions',
+        href: '/doctor/clinic-session-review',
         icon: Calendar,
         badge: '8'
       },
       {
-        name: 'Medical Records',
-        href: '/doctor/records',
+        name: 'Disease Management',
+        href: '/doctor/clinic-disease-confirmation',
         icon: FileText
       },
       {
@@ -111,9 +112,9 @@ const getNavigationItems = (userRole) => {
         icon: Stethoscope
       },
       {
-        name: 'Prescriptions',
-        href: '/doctor/prescriptions',
-        icon: Pill
+        name: 'Symptom Checker',
+        href: '/doctor/clinic-symptoms-check/',
+        icon: Activity
       },
       {
         name: 'Clinical Reports',

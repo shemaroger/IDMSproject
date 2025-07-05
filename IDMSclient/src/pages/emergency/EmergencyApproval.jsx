@@ -1,709 +1,315 @@
-// src/pages/emergency/EmergencyApproval.jsx
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import emergencyAmbulanceService from '../../services/emergencyAmbulanceService';
-import { authAPI, healthcareAPI } from '../../services/api';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import {
-  CheckCircle,
-  XCircle,
-  Clock,
-  AlertTriangle,
-  User,
-  MapPin,
-  Heart,
-  Activity,
-  Building,
-  Phone,
-  Calendar,
-  Search,
-  Filter,
-  RefreshCw,
-  Loader2,
-  Eye,
-  FileText,
-  Zap,
-  Info,
-  Shield,
-  ThumbsUp,
-  ThumbsDown,
-  MessageSquare,
-  Flag,
+import { healthcareAPI, authAPI } from '../../services/api';
+import { 
+  AlertTriangle, 
+  Clock, 
+  MapPin, 
+  Phone, 
+  User, 
+  CheckCircle, 
+  X, 
+  Eye, 
+  Car, 
   Hospital,
-  Truck,
-  Send,
-  X,
-  Plus,
-  Edit3,
-  AlertCircle,
-  UserCheck,
-  ClipboardList
+  FileText,
+  Filter,
+  Search,
+  Calendar,
+  Activity
 } from 'lucide-react';
 
-const EmergencyApproval = () => {
-  // =========================== STATE MANAGEMENT ===========================
-  
-  // Data states
-  const [pendingRequests, setPendingRequests] = useState([]);
-  const [approvedRequests, setApprovedRequests] = useState([]);
-  const [rejectedRequests, setRejectedRequests] = useState([]);
-  const [clinics, setClinics] = useState([]);
-  const [stats, setStats] = useState({});
-  const [lastRefresh, setLastRefresh] = useState(new Date());
-  
-  // Loading states
+const EmergencyManagementPage = () => {
+  const [emergencyRequests, setEmergencyRequests] = useState([]);
+  const [filteredRequests, setFilteredRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState({});
-  
-  // Message states
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  
-  // Modal states
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
-  const [approvalAction, setApprovalAction] = useState(''); // 'approve' or 'reject'
-  
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [showRejectionModal, setShowRejectionModal] = useState(false);
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [statistics, setStatistics] = useState({});
+
+  // Filter states
+  const [filters, setFilters] = useState({
+    status: 'all',
+    approvalStatus: 'all',
+    urgency: 'all',
+    search: '',
+    dateRange: 'all'
+  });
+
   // Form states
-  const [approvalForm, setApprovalForm] = useState({
+  const [approvalData, setApprovalData] = useState({
     comments: '',
     priority: '',
-    recommendedHospital: '',
-    urgencyLevel: '',
-    additionalNotes: ''
+    urgency_level: ''
   });
-  
-  // Filter states
-  const [activeTab, setActiveTab] = useState('pending'); // 'pending', 'approved', 'rejected'
-  const [searchTerm, setSearchTerm] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [clinicFilter, setClinicFilter] = useState('all');
-  
-  // User context
-  const currentUser = authAPI.getCurrentUser();
-  const canApprove = ['Admin', 'Doctor', 'Nurse', 'Emergency_Coordinator'].includes(currentUser?.role?.name);
 
-  // =========================== COMPUTED VALUES ===========================
-  
-  const getCurrentRequests = () => {
-    switch (activeTab) {
-      case 'approved': return approvedRequests;
-      case 'rejected': return rejectedRequests;
-      default: return pendingRequests;
-    }
-  };
+  const [rejectionData, setRejectionData] = useState({
+    reason: '',
+    comments: ''
+  });
 
-  const filteredRequests = useMemo(() => {
-    const currentRequests = getCurrentRequests();
-    
-    return currentRequests.filter(request => {
-      const formatted = emergencyAmbulanceService.formatEmergencyRequest(request);
-      
-      // Search filter
-      if (searchTerm) {
-        const searchLower = searchTerm.toLowerCase();
-        const matchesSearch = 
-          formatted.patient.toLowerCase().includes(searchLower) ||
-          formatted.location.toLowerCase().includes(searchLower) ||
-          formatted.condition.toLowerCase().includes(searchLower) ||
-          formatted.suspectedDisease?.toLowerCase().includes(searchLower) ||
-          request.clinic_name?.toLowerCase().includes(searchLower);
-        
-        if (!matchesSearch) return false;
-      }
-      
-      // Priority filter
-      if (priorityFilter !== 'all' && formatted.priority !== priorityFilter) {
-        return false;
-      }
-      
-      // Clinic filter
-      if (clinicFilter !== 'all' && request.clinic !== parseInt(clinicFilter)) {
-        return false;
-      }
-      
-      return true;
-    });
-  }, [activeTab, pendingRequests, approvedRequests, rejectedRequests, searchTerm, priorityFilter, clinicFilter]);
+  const [dispatchData, setDispatchData] = useState({
+    ambulance_id: '',
+    hospital_destination: ''
+  });
 
-  const dashboardStats = useMemo(() => {
-    return {
-      pending: pendingRequests.length,
-      approved: approvedRequests.length,
-      rejected: rejectedRequests.length,
-      total: pendingRequests.length + approvedRequests.length + rejectedRequests.length,
-      critical: [...pendingRequests, ...approvedRequests, ...rejectedRequests]
-        .filter(req => emergencyAmbulanceService.formatEmergencyRequest(req).priority === 'critical').length
-    };
-  }, [pendingRequests, approvedRequests, rejectedRequests]);
-
-  // =========================== DATA FETCHING ===========================
-  
-  const fetchClinics = useCallback(async () => {
-    try {
-      const response = await healthcareAPI.clinics.list();
-      if (response.data) {
-        const clinicData = response.data.results || response.data;
-        setClinics(clinicData);
-      }
-    } catch (err) {
-      console.error('Error fetching clinics:', err);
-    }
+  useEffect(() => {
+    fetchEmergencyRequests();
+    fetchStatistics();
   }, []);
-  
-  const fetchEmergencyRequests = useCallback(async () => {
+
+  useEffect(() => {
+    applyFilters();
+  }, [emergencyRequests, filters]);
+
+  const fetchEmergencyRequests = async () => {
     try {
-      setLoading(true);
-      setError('');
-      
-      console.log('🔍 Starting to fetch emergency requests...');
-      
-      // Fetch all requests and categorize them
-      const response = await emergencyAmbulanceService.getEmergencyRequests({
-        ordering: '-request_time'
-      });
-      
-      console.log('📊 API Response:', response);
-      
-      if (response.success) {
-        const requests = response.requests;
-        console.log('📋 Total requests received:', requests.length);
-        console.log('🔍 Raw requests data:', requests);
-        
-        // Log each request for debugging
-        requests.forEach((req, index) => {
-          console.log(`📄 Request ${index + 1}:`, {
-            id: req.id,
-            status: req.status,
-            approval_status: req.approval_status,
-            patient_name: req.patient_name,
-            location: req.location,
-            condition: req.condition_description,
-            request_time: req.request_time
-          });
-        });
-        
-        // Categorize requests based on status and approval fields
-        const pending = requests.filter(req => {
-          // Pending: Status 'P' and (no approval_status or approval_status is 'pending')
-          const isPending = req.status === 'P' && (!req.approval_status || req.approval_status === 'pending');
-          if (isPending) {
-            console.log('✅ Found pending request:', req.id);
-          }
-          return isPending;
-        });
-        
-        const approved = requests.filter(req => {
-          // Approved: approval_status is 'approved' OR status is beyond 'P' (D, A, T, C)
-          const isApproved = req.approval_status === 'approved' || ['D', 'A', 'T', 'C'].includes(req.status);
-          if (isApproved) {
-            console.log('✅ Found approved request:', req.id);
-          }
-          return isApproved;
-        });
-        
-        const rejected = requests.filter(req => {
-          // Rejected: approval_status is 'rejected'
-          const isRejected = req.approval_status === 'rejected';
-          if (isRejected) {
-            console.log('✅ Found rejected request:', req.id);
-          }
-          return isRejected;
-        });
-        
-        console.log('📊 Categorized results:', {
-          pending: pending.length,
-          approved: approved.length,
-          rejected: rejected.length
-        });
-        
-        setPendingRequests(pending);
-        setApprovedRequests(approved);
-        setRejectedRequests(rejected);
-        setLastRefresh(new Date());
-      } else {
-        console.error('❌ API call failed:', response);
-        setError('Failed to fetch emergency requests');
-      }
-    } catch (err) {
-      console.error('❌ Error fetching emergency requests:', err);
-      console.error('❌ Error details:', {
-        message: err.message,
-        stack: err.stack,
-        response: err.response
-      });
-      setError('Failed to fetch emergency requests: ' + err.message);
+      // Use the correct endpoint that matches the Django ViewSet
+      const response = await healthcareAPI.emergencies.list();
+      setEmergencyRequests(response.data.results || response.data);
+    } catch (error) {
+      console.error('Error fetching emergency requests:', error);
+      alert('Error loading emergency requests');
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  // =========================== APPROVAL HANDLERS ===========================
-  
-  const handleApprovalAction = (request, action) => {
-    setSelectedRequest(request);
-    setApprovalAction(action);
-    setShowApprovalModal(true);
-    
-    // Pre-fill form based on request data
-    const formatted = emergencyAmbulanceService.formatEmergencyRequest(request);
-    setApprovalForm({
-      comments: '',
-      priority: formatted.priority,
-      recommendedHospital: '',
-      urgencyLevel: formatted.priority === 'critical' ? 'high' : 'medium',
-      additionalNotes: ''
-    });
   };
 
-  const handleSubmitApproval = async () => {
-    if (!selectedRequest || !approvalAction) return;
-    
+  const fetchStatistics = async () => {
     try {
-      setActionLoading(prev => ({ ...prev, approval: true }));
-      
-      const currentUser = authAPI.getCurrentUser();
-      let response;
-      
-      if (approvalAction === 'approve') {
-        // Use the service's approve method
-        response = await emergencyAmbulanceService.approveEmergencyRequest(selectedRequest.id, {
-          comments: approvalForm.comments,
-          priority: approvalForm.priority,
-          recommendedHospital: approvalForm.recommendedHospital,
-          urgencyLevel: approvalForm.urgencyLevel,
-          additionalNotes: approvalForm.additionalNotes
-        });
-      } else {
-        // Use the service's reject method
-        response = await emergencyAmbulanceService.rejectEmergencyRequest(selectedRequest.id, {
-          comments: approvalForm.comments,
-          reason: 'Manual rejection',
-          additionalNotes: approvalForm.additionalNotes
-        });
-      }
-      
-      if (response.success) {
-        setSuccess(`Emergency request ${approvalAction === 'approve' ? 'approved' : 'rejected'} successfully`);
-        setShowApprovalModal(false);
-        resetApprovalForm();
-        fetchEmergencyRequests();
-      } else {
-        setError(`Failed to ${approvalAction} emergency request`);
-      }
-    } catch (err) {
-      console.error(`Error ${approvalAction}ing emergency request:`, err);
-      setError(err.message || `Failed to ${approvalAction} emergency request`);
-    } finally {
-      setActionLoading(prev => ({ ...prev, approval: false }));
+      // Use the correct statistics endpoint
+      const response = await healthcareAPI.emergencies.getStatistics();
+      setStatistics(response.data);
+    } catch (error) {
+      console.error('Error fetching statistics:', error);
     }
   };
 
-  const handleBulkApproval = async (requests, action) => {
-    try {
-      setActionLoading(prev => ({ ...prev, bulk: true }));
-      
-      const requestIds = requests.map(req => req.id);
-      let response;
-      
-      if (action === 'approve') {
-        response = await emergencyAmbulanceService.bulkApproveRequests(requestIds, {
-          comments: `Bulk approved by ${currentUser.name || currentUser.email}`,
-          priority: 'normal',
-          urgencyLevel: 'medium'
-        });
-      } else {
-        response = await emergencyAmbulanceService.bulkRejectRequests(requestIds, {
-          comments: `Bulk rejected by ${currentUser.name || currentUser.email}`,
-          reason: 'Bulk operation'
-        });
-      }
-      
-      if (response.success) {
-        setSuccess(`${requests.length} requests ${action}d successfully`);
-        fetchEmergencyRequests();
-      } else {
-        setError(`Failed to ${action} requests in bulk`);
-      }
-    } catch (err) {
-      console.error(`Error in bulk ${action}:`, err);
-      setError(`Failed to ${action} requests in bulk`);
-    } finally {
-      setActionLoading(prev => ({ ...prev, bulk: false }));
-    }
-  };
+  const applyFilters = () => {
+    let filtered = [...emergencyRequests];
 
-  // =========================== UTILITY FUNCTIONS ===========================
-  
-  const resetApprovalForm = () => {
-    setApprovalForm({
-      comments: '',
-      priority: '',
-      recommendedHospital: '',
-      urgencyLevel: '',
-      additionalNotes: ''
+    // Status filter
+    if (filters.status !== 'all') {
+      filtered = filtered.filter(req => req.status === filters.status);
+    }
+
+    // Approval status filter
+    if (filters.approvalStatus !== 'all') {
+      filtered = filtered.filter(req => req.approval_status === filters.approvalStatus);
+    }
+
+    // Urgency filter
+    if (filters.urgency !== 'all') {
+      filtered = filtered.filter(req => req.urgency_level === filters.urgency);
+    }
+
+    // Search filter
+    if (filters.search) {
+      const searchTerm = filters.search.toLowerCase();
+      filtered = filtered.filter(req => 
+        req.location.toLowerCase().includes(searchTerm) ||
+        req.condition_description.toLowerCase().includes(searchTerm) ||
+        req.suspected_disease?.toLowerCase().includes(searchTerm) ||
+        req.patient_name?.toLowerCase().includes(searchTerm) ||
+        req.id.toString().includes(searchTerm)
+      );
+    }
+
+    // Date range filter
+    if (filters.dateRange !== 'all') {
+      const now = new Date();
+      let filterDate = null;
+      
+      switch (filters.dateRange) {
+        case 'today':
+          filterDate = new Date();
+          filterDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          filterDate = new Date();
+          filterDate.setDate(now.getDate() - 7);
+          break;
+        case 'month':
+          filterDate = new Date();
+          filterDate.setMonth(now.getMonth() - 1);
+          break;
+        default:
+          filterDate = null;
+      }
+      
+      if (filterDate) {
+        filtered = filtered.filter(req => new Date(req.request_time) >= filterDate);
+      }
+    }
+
+    // Sort by urgency and time
+    filtered.sort((a, b) => {
+      const urgencyOrder = { immediate: 4, urgent: 3, standard: 2, non_urgent: 1 };
+      const urgencyA = urgencyOrder[a.urgency_level] || 2;
+      const urgencyB = urgencyOrder[b.urgency_level] || 2;
+      
+      if (urgencyA !== urgencyB) {
+        return urgencyB - urgencyA; // Higher urgency first
+      }
+      
+      return new Date(b.request_time) - new Date(a.request_time); // Newer first
     });
+
+    setFilteredRequests(filtered);
   };
 
-  const getApprovalStatusColor = (status) => {
-    switch (status) {
-      case 'approved': return 'bg-green-100 text-green-800 border-green-300';
-      case 'rejected': return 'bg-red-100 text-red-800 border-red-300';
-      default: return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-    }
-  };
-
-  const getApprovalStatusIcon = (status) => {
-    switch (status) {
-      case 'approved': return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'rejected': return <XCircle className="h-4 w-4 text-red-500" />;
-      default: return <Clock className="h-4 w-4 text-yellow-500" />;
-    }
-  };
-
-  const getPriorityIcon = (priority) => {
-    switch (priority) {
-      case 'critical': return <Zap className="h-4 w-4 text-red-500" />;
-      case 'urgent': return <AlertTriangle className="h-4 w-4 text-orange-500" />;
-      case 'normal': return <Info className="h-4 w-4 text-blue-500" />;
-      default: return <Info className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getPriorityColor = (priority) => {
-    switch (priority) {
-      case 'critical': return 'bg-red-100 text-red-800 border-red-300';
-      case 'urgent': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'normal': return 'bg-blue-100 text-blue-800 border-blue-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  // =========================== EFFECTS ===========================
-  
-  useEffect(() => {
-    fetchEmergencyRequests();
-    fetchClinics();
+  const handleApproval = async () => {
+    if (!selectedRequest) return;
     
-    // Auto-refresh every 60 seconds
-    const interval = setInterval(fetchEmergencyRequests, 60000);
-    return () => clearInterval(interval);
-  }, [fetchEmergencyRequests, fetchClinics]);
-
-  // Auto-clear messages
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 5000);
-      return () => clearTimeout(timer);
+    setActionLoading(true);
+    try {
+      await healthcareAPI.emergencies.approve(selectedRequest.id, approvalData);
+      setShowApprovalModal(false);
+      setApprovalData({ comments: '', priority: '', urgency_level: '' });
+      fetchEmergencyRequests();
+      fetchStatistics();
+      alert('Emergency request approved successfully');
+    } catch (error) {
+      console.error('Error approving request:', error);
+      alert('Error approving request: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionLoading(false);
     }
-  }, [success]);
+  };
 
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(''), 8000);
-      return () => clearTimeout(timer);
+  const handleRejection = async () => {
+    if (!selectedRequest || !rejectionData.reason.trim()) {
+      alert('Please provide a reason for rejection');
+      return;
     }
-  }, [error]);
-
-  // =========================== RENDER COMPONENTS ===========================
-  
-  const AlertMessage = ({ type, message, onClose }) => (
-    <div className={`${type === 'error' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'} border rounded-lg p-4 mb-6`}>
-      <div className="flex items-start gap-3">
-        {type === 'error' ? (
-          <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-        ) : (
-          <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-        )}
-        <div className="flex-1">
-          <h3 className={`text-sm font-medium ${type === 'error' ? 'text-red-800' : 'text-green-800'} mb-1`}>
-            {type === 'error' ? 'Error' : 'Success'}
-          </h3>
-          <p className={`${type === 'error' ? 'text-red-700' : 'text-green-700'} text-sm`}>
-            {message}
-          </p>
-        </div>
-        <button
-          onClick={onClose}
-          className={`${type === 'error' ? 'text-red-500 hover:text-red-700' : 'text-green-500 hover:text-green-700'} p-1`}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
-
-  const StatCard = ({ icon: Icon, title, value, color, onClick }) => (
-    <div 
-      className={`bg-white rounded-lg shadow-sm p-4 ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
-      onClick={onClick}
-    >
-      <div className="flex items-center gap-3">
-        <div className={`bg-${color}-100 p-2 rounded-lg`}>
-          <Icon className={`h-5 w-5 text-${color}-600`} />
-        </div>
-        <div>
-          <p className="text-sm text-gray-600">{title}</p>
-          <p className="text-xl font-semibold text-gray-900">{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-
-  const TabButton = ({ id, label, count, isActive, onClick }) => (
-    <button
-      onClick={() => onClick(id)}
-      className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-        isActive
-          ? 'bg-blue-100 text-blue-700 border border-blue-300'
-          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-      }`}
-    >
-      {label}
-      <span className={`px-2 py-1 rounded-full text-xs ${
-        isActive
-          ? 'bg-blue-200 text-blue-800'
-          : 'bg-gray-200 text-gray-600'
-      }`}>
-        {count}
-      </span>
-    </button>
-  );
-
-  const FilterControls = () => (
-    <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-      <div className="flex flex-col lg:flex-row gap-4">
-        <div className="flex-1">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search by patient, location, condition, or clinic..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-        
-        <div className="flex flex-col sm:flex-row gap-4">
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Priority</option>
-            <option value="critical">Critical</option>
-            <option value="urgent">Urgent</option>
-            <option value="normal">Normal</option>
-          </select>
-          
-          <select
-            value={clinicFilter}
-            onChange={(e) => setClinicFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Clinics</option>
-            {clinics.map(clinic => (
-              <option key={clinic.id} value={clinic.id}>
-                {clinic.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-    </div>
-  );
-
-  const EmergencyRequestCard = ({ request }) => {
-    const formatted = emergencyAmbulanceService.formatEmergencyRequest(request);
     
-    // Determine approval status from the request data
-    const approvalStatus = request.approval_status || 'pending';
-    const isApproved = approvalStatus === 'approved' || ['D', 'A', 'T', 'C'].includes(request.status);
-    const isRejected = approvalStatus === 'rejected';
-    const isPending = approvalStatus === 'pending' && request.status === 'P';
+    setActionLoading(true);
+    try {
+      await healthcareAPI.emergencies.reject(selectedRequest.id, rejectionData);
+      setShowRejectionModal(false);
+      setRejectionData({ reason: '', comments: '' });
+      fetchEmergencyRequests();
+      fetchStatistics();
+      alert('Emergency request rejected');
+    } catch (error) {
+      console.error('Error rejecting request:', error);
+      alert('Error rejecting request: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDispatch = async () => {
+    if (!selectedRequest || !dispatchData.ambulance_id.trim()) {
+      alert('Please provide an ambulance ID');
+      return;
+    }
     
-    const isLoading = actionLoading[request.id];
+    setActionLoading(true);
+    try {
+      await healthcareAPI.emergencies.dispatch(selectedRequest.id, dispatchData);
+      setShowDispatchModal(false);
+      setDispatchData({ ambulance_id: '', hospital_destination: '' });
+      fetchEmergencyRequests();
+      fetchStatistics();
+      alert('Ambulance dispatched successfully');
+    } catch (error) {
+      console.error('Error dispatching ambulance:', error);
+      alert('Error dispatching ambulance: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleStatusUpdate = async (requestId, newStatus) => {
+    setActionLoading(true);
+    try {
+      await healthcareAPI.emergencies.updateStatus(requestId, { status: newStatus });
+      fetchEmergencyRequests();
+      fetchStatistics();
+      alert('Status updated successfully');
+    } catch (error) {
+      console.error('Error updating status:', error);
+      alert('Error updating status: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const getStatusBadge = (status, approvalStatus) => {
+    if (approvalStatus === 'rejected') {
+      return <span className="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded-full">Rejected</span>;
+    }
+    
+    const statusMap = {
+      'P': { text: 'Pending Review', color: 'bg-yellow-100 text-yellow-800' },
+      'D': { text: 'Dispatched', color: 'bg-blue-100 text-blue-800' },
+      'A': { text: 'Ambulance Arrived', color: 'bg-purple-100 text-purple-800' },
+      'T': { text: 'In Transit', color: 'bg-indigo-100 text-indigo-800' },
+      'C': { text: 'Completed', color: 'bg-green-100 text-green-800' }
+    };
+    
+    const statusInfo = statusMap[status] || { text: 'Unknown', color: 'bg-gray-100 text-gray-800' };
     
     return (
-      <div className="p-6 hover:bg-gray-50 transition-colors">
-        <div className="flex items-start gap-4">
-          {/* Priority Indicator */}
-          <div className="flex-shrink-0 mt-1">
-            {getPriorityIcon(formatted.priority)}
-          </div>
-
-          {/* Main Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                {/* Status and Priority */}
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    {getApprovalStatusIcon(approvalStatus)}
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getApprovalStatusColor(approvalStatus)}`}>
-                      {approvalStatus.toUpperCase()}
-                    </span>
-                  </div>
-                  
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getPriorityColor(formatted.priority)}`}>
-                    {formatted.priority.toUpperCase()}
-                  </span>
-                </div>
-
-                {/* Patient and Time */}
-                <div className="flex items-center gap-4 mb-3">
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <User className="h-4 w-4" />
-                    <span className="font-medium">{formatted.patient}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <Clock className="h-4 w-4" />
-                    <span className="font-medium">{formatted.timeAgo}</span>
-                  </div>
-                </div>
-
-                {/* Location */}
-                <div className="flex items-center gap-2 mb-3">
-                  <MapPin className="h-4 w-4 text-gray-400" />
-                  <span className="text-gray-700">{formatted.location}</span>
-                </div>
-
-                {/* Condition */}
-                <div className="flex items-start gap-2 mb-3">
-                  <Heart className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-gray-700">{formatted.condition}</span>
-                </div>
-
-                {/* Clinic Information */}
-                {request.clinic_name && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <Building className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Clinic:</strong> {request.clinic_name}
-                    </span>
-                  </div>
-                )}
-
-                {/* Suspected Disease */}
-                {formatted.suspectedDisease && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <Activity className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Suspected:</strong> {formatted.suspectedDisease}
-                    </span>
-                  </div>
-                )}
-
-                {/* Approval Information */}
-                {request.approved_by_name && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <UserCheck className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Approved by:</strong> {request.approved_by_name}
-                    </span>
-                  </div>
-                )}
-
-                {request.approval_comments && (
-                  <div className="flex items-start gap-2 mb-2">
-                    <MessageSquare className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
-                    <span className="text-gray-700">
-                      <strong>Comments:</strong> {request.approval_comments}
-                    </span>
-                  </div>
-                )}
-
-                {/* Recommended Hospital */}
-                {request.recommended_hospital && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <Building className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Recommended Hospital:</strong> {request.recommended_hospital}
-                    </span>
-                  </div>
-                )}
-
-                {/* Show rejection info if rejected */}
-                {isRejected && (
-                  <div className="flex items-start gap-2 mb-2">
-                    <XCircle className="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" />
-                    <span className="text-red-700">
-                      <strong>Status:</strong> This request has been rejected
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 ml-4">
-                <button
-                  onClick={() => {
-                    setSelectedRequest(request);
-                    setShowDetailsModal(true);
-                  }}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  title="View Details"
-                >
-                  <Eye className="h-4 w-4" />
-                </button>
-
-                {canApprove && isPending && (
-                  <>
-                    <button
-                      onClick={() => handleApprovalAction(request, 'approve')}
-                      disabled={isLoading}
-                      className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50"
-                      title="Approve Request"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ThumbsUp className="h-4 w-4" />
-                      )}
-                    </button>
-                    
-                    <button
-                      onClick={() => handleApprovalAction(request, 'reject')}
-                      disabled={isLoading}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                      title="Reject Request"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ThumbsDown className="h-4 w-4" />
-                      )}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${statusInfo.color}`}>
+        {statusInfo.text}
+      </span>
     );
   };
 
-  // =========================== MAIN RENDER ===========================
-  
-  if (!canApprove) {
+  const getUrgencyColor = (urgency) => {
+    const colorMap = {
+      'immediate': 'text-red-600 bg-red-50',
+      'urgent': 'text-orange-600 bg-orange-50',
+      'standard': 'text-green-600 bg-green-50',
+      'non_urgent': 'text-gray-600 bg-gray-50'
+    };
+    return colorMap[urgency] || 'text-gray-600 bg-gray-50';
+  };
+
+  const getUrgencyIcon = (urgency) => {
+    switch (urgency) {
+      case 'immediate':
+        return <AlertTriangle className="w-4 h-4 text-red-600" />;
+      case 'urgent':
+        return <Clock className="w-4 h-4 text-orange-600" />;
+      case 'standard':
+        return <Activity className="w-4 h-4 text-green-600" />;
+      default:
+        return <Clock className="w-4 h-4 text-gray-600" />;
+    }
+  };
+
+  const openApprovalModal = (request) => {
+    setSelectedRequest(request);
+    setShowApprovalModal(true);
+  };
+
+  const openRejectionModal = (request) => {
+    setSelectedRequest(request);
+    setShowRejectionModal(true);
+  };
+
+  const openDispatchModal = (request) => {
+    setSelectedRequest(request);
+    setShowDispatchModal(true);
+  };
+
+  const viewRequestDetails = (request) => {
+    setSelectedRequest(request);
+    setShowDetailModal(true);
+  };
+
+  if (loading) {
     return (
       <DashboardLayout>
-        <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-              <Shield className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h1>
-              <p className="text-gray-600 mb-6">
-                You don't have permission to access the Emergency Approval system.
-              </p>
-              <p className="text-sm text-gray-500">
-                This feature is restricted to Administrators, Doctors, Nurses, and Emergency Coordinators.
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
       </DashboardLayout>
     );
@@ -711,582 +317,786 @@ const EmergencyApproval = () => {
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-        <div className="max-w-7xl mx-auto">
-          
-          {/* Header */}
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Emergency Request Management</h1>
+            <p className="text-gray-600">Review, approve, and manage emergency ambulance requests</p>
+          </div>
+        </div>
+
+        {/* Statistics Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                  <ClipboardList className="h-8 w-8 text-blue-600" />
-                  Emergency Request Approval
-                </h1>
-                <p className="text-gray-600">
-                  Review and approve emergency ambulance requests • Last updated: {lastRefresh.toLocaleTimeString()}
-                </p>
+                <p className="text-sm font-medium text-gray-600">Total Requests</p>
+                <p className="text-2xl font-bold text-gray-900">{statistics.total || 0}</p>
               </div>
-              <div className="mt-4 lg:mt-0 flex gap-3">
-                {activeTab === 'pending' && pendingRequests.length > 0 && (
-                  <>
-                    <button
-                      onClick={() => handleBulkApproval(pendingRequests, 'approve')}
-                      disabled={actionLoading.bulk}
-                      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading.bulk ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle className="h-4 w-4" />
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <FileText className="w-5 h-5 text-blue-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Pending Approval</p>
+                <p className="text-2xl font-bold text-yellow-600">{statistics.pending || 0}</p>
+              </div>
+              <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                <Clock className="w-5 h-5 text-yellow-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Critical Pending</p>
+                <p className="text-2xl font-bold text-red-600">{statistics.critical_pending || 0}</p>
+              </div>
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Approved</p>
+                <p className="text-2xl font-bold text-green-600">{statistics.approved || 0}</p>
+              </div>
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="w-5 h-5 text-gray-600" />
+            <h3 className="font-medium text-gray-900">Filters</h3>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters({...filters, status: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Status</option>
+                <option value="P">Pending Review</option>
+                <option value="D">Dispatched</option>
+                <option value="A">Arrived</option>
+                <option value="T">In Transit</option>
+                <option value="C">Completed</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Approval</label>
+              <select
+                value={filters.approvalStatus}
+                onChange={(e) => setFilters({...filters, approvalStatus: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Approval</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Urgency</label>
+              <select
+                value={filters.urgency}
+                onChange={(e) => setFilters({...filters, urgency: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Urgency</option>
+                <option value="immediate">Immediate</option>
+                <option value="urgent">Urgent</option>
+                <option value="standard">Standard</option>
+                <option value="non_urgent">Non-urgent</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+              <select
+                value={filters.dateRange}
+                onChange={(e) => setFilters({...filters, dateRange: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">Last Week</option>
+                <option value="month">Last Month</option>
+              </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search requests..."
+                  value={filters.search}
+                  onChange={(e) => setFilters({...filters, search: e.target.value})}
+                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Emergency Requests List */}
+        <div className="space-y-4">
+          {filteredRequests.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-lg">
+              <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Emergency Requests</h3>
+              <p className="text-gray-600">No requests match your current filters.</p>
+            </div>
+          ) : (
+            filteredRequests.map((request) => (
+              <div key={request.id} className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getUrgencyColor(request.urgency_level)}`}>
+                      {getUrgencyIcon(request.urgency_level)}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Request #{request.id}</h3>
+                      <p className="text-sm text-gray-500">
+                        {new Date(request.request_time).toLocaleString()}
+                      </p>
+                      {request.patient_name && (
+                        <p className="text-sm text-blue-600">Patient: {request.patient_name}</p>
                       )}
-                      Approve All
-                    </button>
-                    <button
-                      onClick={() => handleBulkApproval(pendingRequests, 'reject')}
-                      disabled={actionLoading.bulk}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading.bulk ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <XCircle className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getUrgencyColor(request.urgency_level)}`}>
+                      {request.urgency_level?.replace('_', ' ').toUpperCase() || 'STANDARD'}
+                    </span>
+                    {getStatusBadge(request.status, request.approval_status)}
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mb-4">
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-gray-400 mt-1" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Location</p>
+                      <p className="text-sm text-gray-600">{request.location}</p>
+                      {request.clinic_name && (
+                        <p className="text-xs text-blue-600 mt-1">Clinic: {request.clinic_name}</p>
                       )}
-                      Reject All
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-2">
+                    <User className="w-4 h-4 text-gray-400 mt-1" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Medical Condition</p>
+                      <p className="text-sm text-gray-600">{request.condition_description}</p>
+                      {request.suspected_disease && (
+                        <p className="text-xs text-orange-600 mt-1">Suspected: {request.suspected_disease}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap gap-2 pt-4 border-t">
+                  <button
+                    onClick={() => viewRequestDetails(request)}
+                    className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
+                  >
+                    <Eye className="w-4 h-4" />
+                    View Details
+                  </button>
+
+                  {request.approval_status === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => openApprovalModal(request)}
+                        className="flex items-center gap-1 px-3 py-1 text-sm text-green-600 hover:text-green-800 hover:bg-green-50 rounded-md transition-colors"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => openRejectionModal(request)}
+                        className="flex items-center gap-1 px-3 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                        Reject
+                      </button>
+                    </>
+                  )}
+
+                  {request.approval_status === 'approved' && request.status === 'P' && (
+                    <button
+                      onClick={() => openDispatchModal(request)}
+                      className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
+                    >
+                      <Car className="w-4 h-4" />
+                      Dispatch
                     </button>
-                  </>
-                )}
+                  )}
+
+                  {request.status === 'D' && (
+                    <button
+                      onClick={() => handleStatusUpdate(request.id, 'A')}
+                      className="flex items-center gap-1 px-3 py-1 text-sm text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-md transition-colors"
+                    >
+                      <MapPin className="w-4 h-4" />
+                      Mark Arrived
+                    </button>
+                  )}
+
+                  {request.status === 'A' && (
+                    <button
+                      onClick={() => handleStatusUpdate(request.id, 'T')}
+                      className="flex items-center gap-1 px-3 py-1 text-sm text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md transition-colors"
+                    >
+                      <Car className="w-4 h-4" />
+                      In Transit
+                    </button>
+                  )}
+
+                  {request.status === 'T' && (
+                    <button
+                      onClick={() => handleStatusUpdate(request.id, 'C')}
+                      className="flex items-center gap-1 px-3 py-1 text-sm text-green-600 hover:text-green-800 hover:bg-green-50 rounded-md transition-colors"
+                    >
+                      <Hospital className="w-4 h-4" />
+                      Complete
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Approval Modal */}
+        {showApprovalModal && selectedRequest && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+              <h2 className="text-xl font-bold mb-4">Approve Emergency Request</h2>
+              <p className="text-gray-600 mb-4">
+                Approve emergency request #{selectedRequest.id}?
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Priority Override (Optional)
+                  </label>
+                  <select
+                    value={approvalData.priority}
+                    onChange={(e) => setApprovalData({...approvalData, priority: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">No change</option>
+                    <option value="immediate">Immediate</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="standard">Standard</option>
+                    <option value="non_urgent">Non-urgent</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Urgency Level Override (Optional)
+                  </label>
+                  <select
+                    value={approvalData.urgency_level}
+                    onChange={(e) => setApprovalData({...approvalData, urgency_level: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">No change</option>
+                    <option value="immediate">Immediate</option>
+                    <option value="urgent">Urgent</option>
+                    <option value="standard">Standard</option>
+                    <option value="non_urgent">Non-urgent</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Comments (Optional)
+                  </label>
+                  <textarea
+                    value={approvalData.comments}
+                    onChange={(e) => setApprovalData({...approvalData, comments: e.target.value})}
+                    placeholder="Add any comments or notes..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
                 <button
-                  onClick={fetchEmergencyRequests}
-                  disabled={loading}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  onClick={handleApproval}
+                  disabled={actionLoading}
+                  className="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
                 >
-                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                  Refresh
+                  {actionLoading ? 'Approving...' : 'Approve Request'}
+                </button>
+                <button
+                  onClick={() => setShowApprovalModal(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
                 </button>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Alert Messages */}
-          {error && (
-            <AlertMessage 
-              type="error" 
-              message={error} 
-              onClose={() => setError('')} 
-            />
-          )}
+        {/* Rejection Modal */}
+        {showRejectionModal && selectedRequest && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+              <h2 className="text-xl font-bold mb-4">Reject Emergency Request</h2>
+              <p className="text-gray-600 mb-4">
+                Reject emergency request #{selectedRequest.id}?
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Reason for Rejection *
+                  </label>
+                  <textarea
+                    value={rejectionData.reason}
+                    onChange={(e) => setRejectionData({...rejectionData, reason: e.target.value})}
+                    placeholder="Provide a reason for rejection..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
 
-          {success && (
-            <AlertMessage 
-              type="success" 
-              message={success} 
-              onClose={() => setSuccess('')} 
-            />
-          )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Additional Comments (Optional)
+                  </label>
+                  <textarea
+                    value={rejectionData.comments}
+                    onChange={(e) => setRejectionData({...rejectionData, comments: e.target.value})}
+                    placeholder="Add any additional comments..."
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
 
-          {/* Dashboard Statistics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-            <StatCard 
-              icon={Clock} 
-              title="Pending Approval" 
-              value={dashboardStats.pending} 
-              color="yellow"
-              onClick={() => setActiveTab('pending')}
-            />
-            <StatCard 
-              icon={CheckCircle} 
-              title="Approved" 
-              value={dashboardStats.approved} 
-              color="green"
-              onClick={() => setActiveTab('approved')}
-            />
-            <StatCard 
-              icon={XCircle} 
-              title="Rejected" 
-              value={dashboardStats.rejected} 
-              color="red"
-              onClick={() => setActiveTab('rejected')}
-            />
-            <StatCard 
-              icon={AlertTriangle} 
-              title="Critical Cases" 
-              value={dashboardStats.critical} 
-              color="red"
-            />
-            <StatCard 
-              icon={FileText} 
-              title="Total Requests" 
-              value={dashboardStats.total} 
-              color="blue"
-            />
-          </div>
-
-          {/* Tabs */}
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex gap-2 mb-4">
-              <TabButton
-                id="pending"
-                label="Pending Approval"
-                count={dashboardStats.pending}
-                isActive={activeTab === 'pending'}
-                onClick={setActiveTab}
-              />
-              <TabButton
-                id="approved"
-                label="Approved"
-                count={dashboardStats.approved}
-                isActive={activeTab === 'approved'}
-                onClick={setActiveTab}
-              />
-              <TabButton
-                id="rejected"
-                label="Rejected"
-                count={dashboardStats.rejected}
-                isActive={activeTab === 'rejected'}
-                onClick={setActiveTab}
-              />
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleRejection}
+                  disabled={actionLoading || !rejectionData.reason.trim()}
+                  className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading ? 'Rejecting...' : 'Reject Request'}
+                </button>
+                <button
+                  onClick={() => setShowRejectionModal(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Filter Controls */}
-          <FilterControls />
+        {/* Dispatch Modal */}
+        {showDispatchModal && selectedRequest && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+              <h2 className="text-xl font-bold mb-4">Dispatch Ambulance</h2>
+              <p className="text-gray-600 mb-4">
+                Dispatch ambulance for request #{selectedRequest.id}
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Ambulance ID *
+                  </label>
+                  <input
+                    type="text"
+                    value={dispatchData.ambulance_id}
+                    onChange={(e) => setDispatchData({...dispatchData, ambulance_id: e.target.value})}
+                    placeholder="Enter ambulance identifier (e.g., AMB-001)"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
 
-          {/* Emergency Requests List */}
-          <div className="bg-white rounded-lg shadow-sm">
-            {loading ? (
-              <div className="p-12 text-center">
-                <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-4" />
-                <p className="text-gray-600">Loading emergency requests...</p>
-              </div>
-            ) : filteredRequests.length === 0 ? (
-              <div className="p-12 text-center">
-                <ClipboardList className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No {activeTab} requests found
-                </h3>
-                <p className="text-gray-600 mb-4">
-                  {searchTerm || priorityFilter !== 'all' || clinicFilter !== 'all'
-                    ? 'Try adjusting your filters to see more requests'
-                    : `No ${activeTab} emergency requests at this time`}
-                </p>
-                {(searchTerm || priorityFilter !== 'all' || clinicFilter !== 'all') && (
-                  <button
-                    onClick={() => {
-                      setSearchTerm('');
-                      setPriorityFilter('all');
-                      setClinicFilter('all');
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Clear All Filters
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {filteredRequests.map((request) => (
-                  <EmergencyRequestCard key={request.id} request={request} />
-                ))}
-              </div>
-            )}
-          </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Hospital Destination (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={dispatchData.hospital_destination}
+                    onChange={(e) => setDispatchData({...dispatchData, hospital_destination: e.target.value})}
+                    placeholder="Destination hospital name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
 
-          {/* =========================== MODALS =========================== */}
-          
-          {/* Approval Modal */}
-          {showApprovalModal && selectedRequest && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                <div className="p-6 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-gray-900">
-                      {approvalAction === 'approve' ? 'Approve' : 'Reject'} Emergency Request
-                    </h2>
-                    <div className="flex items-center gap-2">
-                      {approvalAction === 'approve' ? (
-                        <CheckCircle className="h-5 w-5 text-green-500" />
-                      ) : (
-                        <XCircle className="h-5 w-5 text-red-500" />
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Review the request details and provide your {approvalAction === 'approve' ? 'approval' : 'rejection'} comments
+                <div className="bg-blue-50 p-3 rounded-md">
+                  <h4 className="font-medium text-blue-800 mb-2">Request Details</h4>
+                  <p className="text-sm text-blue-700">
+                    <strong>Location:</strong> {selectedRequest.location}
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    <strong>Condition:</strong> {selectedRequest.condition_description}
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    <strong>Urgency:</strong> {selectedRequest.urgency_level?.replace('_', ' ').toUpperCase()}
                   </p>
                 </div>
-                
-                <div className="p-6">
-                  {(() => {
-                    const formatted = emergencyAmbulanceService.formatEmergencyRequest(selectedRequest);
-                    
-                    return (
-                      <div className="space-y-4">
-                        {/* Request Summary */}
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <h3 className="font-medium text-gray-900 mb-3">Request Summary</h3>
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <span className="text-gray-600">Patient:</span>
-                              <span className="font-medium text-gray-900 ml-2">{formatted.patient}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Priority:</span>
-                              <span className={`ml-2 px-2 py-1 rounded-full text-xs font-medium border ${getPriorityColor(formatted.priority)}`}>
-                                {formatted.priority.toUpperCase()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Location:</span>
-                              <span className="font-medium text-gray-900 ml-2">{formatted.location}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Time:</span>
-                              <span className="font-medium text-gray-900 ml-2">{formatted.timeAgo}</span>
-                            </div>
-                          </div>
-                          <div className="mt-3">
-                            <span className="text-gray-600">Condition:</span>
-                            <p className="text-gray-900 mt-1">{formatted.condition}</p>
-                          </div>
-                        </div>
+              </div>
 
-                        {/* Approval Form */}
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              {approvalAction === 'approve' ? 'Approval' : 'Rejection'} Comments *
-                            </label>
-                            <textarea
-                              rows={4}
-                              value={approvalForm.comments}
-                              onChange={(e) => setApprovalForm(prev => ({ ...prev, comments: e.target.value }))}
-                              placeholder={`Provide detailed comments for ${approvalAction}ing this request...`}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                          </div>
-
-                          {approvalAction === 'approve' && (
-                            <>
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  Priority Override
-                                </label>
-                                <select
-                                  value={approvalForm.priority}
-                                  onChange={(e) => setApprovalForm(prev => ({ ...prev, priority: e.target.value }))}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                >
-                                  <option value="normal">Normal</option>
-                                  <option value="urgent">Urgent</option>
-                                  <option value="critical">Critical</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  Recommended Hospital
-                                </label>
-                                <input
-                                  type="text"
-                                  value={approvalForm.recommendedHospital}
-                                  onChange={(e) => setApprovalForm(prev => ({ ...prev, recommendedHospital: e.target.value }))}
-                                  placeholder="e.g., Central Hospital, Regional Medical Center"
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                  Urgency Level
-                                </label>
-                                <select
-                                  value={approvalForm.urgencyLevel}
-                                  onChange={(e) => setApprovalForm(prev => ({ ...prev, urgencyLevel: e.target.value }))}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                >
-                                  <option value="low">Low</option>
-                                  <option value="medium">Medium</option>
-                                  <option value="high">High</option>
-                                  <option value="critical">Critical</option>
-                                </select>
-                              </div>
-                            </>
-                          )}
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Additional Notes
-                            </label>
-                            <textarea
-                              rows={3}
-                              value={approvalForm.additionalNotes}
-                              onChange={(e) => setApprovalForm(prev => ({ ...prev, additionalNotes: e.target.value }))}
-                              placeholder="Any additional notes or instructions..."
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-                
-                <div className="p-6 border-t border-gray-200">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowApprovalModal(false)}
-                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSubmitApproval}
-                      disabled={actionLoading.approval || !approvalForm.comments}
-                      className={`flex-1 px-4 py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${
-                        approvalAction === 'approve'
-                          ? 'bg-green-600 text-white hover:bg-green-700'
-                          : 'bg-red-600 text-white hover:bg-red-700'
-                      }`}
-                    >
-                      {actionLoading.approval ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : approvalAction === 'approve' ? (
-                        <CheckCircle className="h-4 w-4" />
-                      ) : (
-                        <XCircle className="h-4 w-4" />
-                      )}
-                      {approvalAction === 'approve' ? 'Approve Request' : 'Reject Request'}
-                    </button>
-                  </div>
-                </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleDispatch}
+                  disabled={actionLoading || !dispatchData.ambulance_id.trim()}
+                  className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {actionLoading ? 'Dispatching...' : 'Dispatch Ambulance'}
+                </button>
+                <button
+                  onClick={() => setShowDispatchModal(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Details Modal */}
-          {showDetailsModal && selectedRequest && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                <div className="p-6 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-gray-900">Emergency Request Details</h2>
-                    <div className="flex items-center gap-2">
-                      {getApprovalStatusIcon(selectedRequest.approval_status || 'pending')}
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getApprovalStatusColor(selectedRequest.approval_status || 'pending')}`}>
-                        {(selectedRequest.approval_status || 'pending').toUpperCase()}
-                      </span>
+        {/* Detail Modal */}
+        {showDetailModal && selectedRequest && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-screen overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold">Emergency Request Details</h2>
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Left Column - Basic Info */}
+                <div className="space-y-4">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Request Information</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Request ID:</span>
+                        <span className="ml-2 text-sm text-gray-600">#{selectedRequest.id}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Submitted:</span>
+                        <span className="ml-2 text-sm text-gray-600">
+                          {new Date(selectedRequest.request_time).toLocaleString()}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Status:</span>
+                        <span className="ml-2">{getStatusBadge(selectedRequest.status, selectedRequest.approval_status)}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Urgency:</span>
+                        <span className={`ml-2 text-sm font-medium px-2 py-1 rounded-full ${getUrgencyColor(selectedRequest.urgency_level)}`}>
+                          {selectedRequest.urgency_level?.replace('_', ' ').toUpperCase() || 'STANDARD'}
+                        </span>
+                      </div>
+                      {selectedRequest.patient_name && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Patient:</span>
+                          <span className="ml-2 text-sm text-blue-600">{selectedRequest.patient_name}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Location Details</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Address:</span>
+                        <p className="text-sm text-gray-600 mt-1">{selectedRequest.location}</p>
+                      </div>
+                      {selectedRequest.gps_coordinates && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">GPS Coordinates:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.gps_coordinates}</p>
+                        </div>
+                      )}
+                      {selectedRequest.clinic_name && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Preferred Clinic:</span>
+                          <p className="text-sm text-blue-600 mt-1">{selectedRequest.clinic_name}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Medical Information</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Condition Description:</span>
+                        <p className="text-sm text-gray-600 mt-1">{selectedRequest.condition_description}</p>
+                      </div>
+                      {selectedRequest.suspected_disease && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Suspected Condition:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.suspected_disease}</p>
+                        </div>
+                      )}
+                      {selectedRequest.additional_notes && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Additional Notes:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.additional_notes}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
-                
-                <div className="p-6 space-y-6">
-                  {(() => {
-                    const formatted = emergencyAmbulanceService.formatEmergencyRequest(selectedRequest);
-                    
-                    return (
-                      <>
-                        {/* Priority Level */}
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                          {getPriorityIcon(formatted.priority)}
+
+                {/* Right Column - Timeline & Status */}
+                <div className="space-y-4">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Status Timeline</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Request Submitted</p>
+                          <p className="text-xs text-gray-600">
+                            {new Date(selectedRequest.request_time).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {selectedRequest.approved_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                           <div>
-                            <h3 className="font-medium text-gray-900">Priority Level</h3>
-                            <p className={`text-sm font-medium ${
-                              formatted.priority === 'critical' ? 'text-red-600' :
-                              formatted.priority === 'urgent' ? 'text-orange-600' :
-                              'text-blue-600'
-                            }`}>
-                              {formatted.priority.toUpperCase()}
+                            <p className="text-sm font-medium text-gray-900">Request Approved</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.approved_at).toLocaleString()}
+                            </p>
+                            {selectedRequest.approved_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.approved_by_name}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedRequest.dispatched_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">Ambulance Dispatched</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.dispatched_at).toLocaleString()}
+                            </p>
+                            {selectedRequest.dispatched_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.dispatched_by_name}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedRequest.arrived_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">Ambulance Arrived</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.arrived_at).toLocaleString()}
                             </p>
                           </div>
                         </div>
+                      )}
 
-                        {/* Patient Information */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Patient</label>
-                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                            <div className="bg-blue-100 p-2 rounded-lg">
-                              <User className="h-5 w-5 text-blue-600" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-900">{formatted.patient}</p>
-                              <p className="text-sm text-gray-600">Request ID: {selectedRequest.id}</p>
-                            </div>
+                      {selectedRequest.in_transit_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">In Transit to Hospital</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.in_transit_at).toLocaleString()}
+                            </p>
                           </div>
                         </div>
+                      )}
 
-                        {/* Time Information */}
-                        <div className="grid grid-cols-2 gap-4">
+                      {selectedRequest.completed_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-green-600 rounded-full"></div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-1">Request Time</label>
-                            <p className="text-gray-900 font-medium">{formatted.formattedTime}</p>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-1">Time Elapsed</label>
-                            <p className="text-gray-900 font-medium">{formatted.timeAgo}</p>
+                            <p className="text-sm font-medium text-gray-900">Request Completed</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.completed_at).toLocaleString()}
+                            </p>
+                            {selectedRequest.completed_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.completed_by_name}</p>
+                            )}
                           </div>
                         </div>
-
-                        {/* Location */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Location</label>
-                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                            <div className="bg-green-100 p-2 rounded-lg">
-                              <MapPin className="h-5 w-5 text-green-600" />
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-medium text-gray-900">{formatted.location}</p>
-                              {formatted.gpsCoordinates && (
-                                <p className="text-sm text-gray-600">GPS: {formatted.gpsCoordinates}</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Clinic Information */}
-                        {selectedRequest.clinic_name && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Clinic</label>
-                            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                              <div className="bg-purple-100 p-2 rounded-lg">
-                                <Building className="h-5 w-5 text-purple-600" />
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-900">{selectedRequest.clinic_name}</p>
-                                <p className="text-sm text-gray-600">Associated Clinic</p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Condition Description */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Condition Description</label>
-                          <div className="p-3 bg-gray-50 rounded-lg">
-                            <p className="text-gray-900 whitespace-pre-wrap">{formatted.condition}</p>
-                          </div>
-                        </div>
-
-                        {/* Suspected Disease */}
-                        {formatted.suspectedDisease && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Suspected Disease</label>
-                            <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Activity className="h-4 w-4 text-yellow-600" />
-                                <p className="font-medium text-yellow-800">{formatted.suspectedDisease}</p>
-                              </div>
-                              {formatted.diseaseInfo && (
-                                <div className="text-sm text-yellow-700 space-y-1">
-                                  <p>Type: {formatted.diseaseInfo.type}</p>
-                                  <p>Contagious: {formatted.diseaseInfo.is_contagious ? 'Yes' : 'No'}</p>
-                                  <p>Emergency Threshold: {formatted.diseaseInfo.emergency_threshold}</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Approval Information */}
-                        {selectedRequest.approval_status && selectedRequest.approval_status !== 'pending' ? (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Approval Information</label>
-                            <div className={`p-3 rounded-lg border ${
-                              selectedRequest.approval_status === 'approved' 
-                                ? 'bg-green-50 border-green-200' 
-                                : 'bg-red-50 border-red-200'
-                            }`}>
-                              <div className="flex items-center gap-2 mb-2">
-                                {selectedRequest.approval_status === 'approved' ? (
-                                  <CheckCircle className="h-4 w-4 text-green-500" />
-                                ) : (
-                                  <XCircle className="h-4 w-4 text-red-500" />
-                                )}
-                                <p className={`font-medium ${
-                                  selectedRequest.approval_status === 'approved' ? 'text-green-800' : 'text-red-800'
-                                }`}>
-                                  {selectedRequest.approval_status.toUpperCase()}
-                                </p>
-                              </div>
-                              
-                              {selectedRequest.approved_by_name && (
-                                <p className={`text-sm ${
-                                  selectedRequest.approval_status === 'approved' ? 'text-green-700' : 'text-red-700'
-                                } mb-1`}>
-                                  <strong>Reviewed by:</strong> {selectedRequest.approved_by_name}
-                                </p>
-                              )}
-                              
-                              {selectedRequest.approved_at && (
-                                <p className={`text-sm ${
-                                  selectedRequest.approval_status === 'approved' ? 'text-green-700' : 'text-red-700'
-                                } mb-1`}>
-                                  <strong>Date:</strong> {new Date(selectedRequest.approved_at).toLocaleString()}
-                                </p>
-                              )}
-                              
-                              {selectedRequest.approval_comments && (
-                                <p className={`text-sm ${
-                                  selectedRequest.approval_status === 'approved' ? 'text-green-700' : 'text-red-700'
-                                }`}>
-                                  <strong>Comments:</strong> {selectedRequest.approval_comments}
-                                </p>
-                              )}
-
-                              {selectedRequest.recommended_hospital && (
-                                <p className="text-sm text-green-700 mt-1">
-                                  <strong>Recommended Hospital:</strong> {selectedRequest.recommended_hospital}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-                
-                <div className="p-6 border-t border-gray-200">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowDetailsModal(false)}
-                      className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                    >
-                      Close
-                    </button>
-                    
-                    {canApprove && selectedRequest.approval_status === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setShowDetailsModal(false);
-                            handleApprovalAction(selectedRequest, 'approve');
-                          }}
-                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
-                        >
-                          <CheckCircle className="h-4 w-4" />
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowDetailsModal(false);
-                            handleApprovalAction(selectedRequest, 'reject');
-                          }}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-                        >
-                          <XCircle className="h-4 w-4" />
-                          Reject
-                        </button>
-                      </>
-                    )}
+                      )}
+                    </div>
                   </div>
+
+                  {selectedRequest.assigned_ambulance && (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-blue-800 mb-3">Ambulance Information</h3>
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-sm font-medium text-blue-700">Ambulance ID:</span>
+                          <p className="text-sm text-blue-600 mt-1">{selectedRequest.assigned_ambulance}</p>
+                        </div>
+                        {selectedRequest.hospital_destination && (
+                          <div>
+                            <span className="text-sm font-medium text-blue-700">Hospital Destination:</span>
+                            <p className="text-sm text-blue-600 mt-1">{selectedRequest.hospital_destination}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedRequest.approval_status === 'rejected' && (
+                    <div className="bg-red-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-red-800 mb-3">Rejection Information</h3>
+                      <div className="space-y-2">
+                        {selectedRequest.rejection_reason && (
+                          <div>
+                            <span className="text-sm font-medium text-red-700">Reason:</span>
+                            <p className="text-sm text-red-600 mt-1">{selectedRequest.rejection_reason}</p>
+                          </div>
+                        )}
+                        {selectedRequest.approval_comments && (
+                          <div>
+                            <span className="text-sm font-medium text-red-700">Comments:</span>
+                            <p className="text-sm text-red-600 mt-1">{selectedRequest.approval_comments}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedRequest.patient_details && (
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-gray-900 mb-3">Patient Information</h3>
+                      <div className="space-y-2">
+                        {selectedRequest.patient_details.emergency_contact_name && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Emergency Contact:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.emergency_contact_name}</p>
+                          </div>
+                        )}
+                        {selectedRequest.patient_details.emergency_contact_phone && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Contact Phone:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.emergency_contact_phone}</p>
+                          </div>
+                        )}
+                        {selectedRequest.patient_details.insurance_provider && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Insurance:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.insurance_provider}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Action Buttons in Detail Modal */}
+              <div className="flex justify-between mt-6 pt-4 border-t">
+                <div className="flex gap-2">
+                  {selectedRequest.approval_status === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setShowDetailModal(false);
+                          openApprovalModal(selectedRequest);
+                        }}
+                        className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowDetailModal(false);
+                          openRejectionModal(selectedRequest);
+                        }}
+                        className="flex items-center gap-1 px-3 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                        Reject
+                      </button>
+                    </>
+                  )}
+
+                  {selectedRequest.approval_status === 'approved' && selectedRequest.status === 'P' && (
+                    <button
+                      onClick={() => {
+                        setShowDetailModal(false);
+                        openDispatchModal(selectedRequest);
+                      }}
+                      className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    >
+                      <Car className="w-4 h-4" />
+                      Dispatch
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
 };
 
-export default EmergencyApproval;
+export default EmergencyManagementPage;

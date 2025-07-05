@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.exceptions import ValidationError
 import os
+import uuid
 
 class Role(models.Model):
     """
@@ -592,24 +593,27 @@ class Disease(models.Model):
             'confusion': 15, 'seizures': 20, 'difficulty_breathing': 18
         }
         
-        return cls.objects.create(
+        disease, created = cls.objects.get_or_create(
             name='Malaria',
-            disease_type='malaria',
-            icd_code='1F40',
-            description='Parasitic disease transmitted by mosquitoes',
-            is_contagious=False,
-            common_symptoms=malaria_symptoms,
-            symptom_weights=malaria_weights,
-            mild_threshold=15,
-            moderate_threshold=35,
-            severe_threshold=60,
-            emergency_threshold=80,
-            common_treatments=[
-                'Antimalarial medications',
-                'Pain relievers',
-                'IV fluids for severe cases'
-            ]
+            defaults={
+                'disease_type': 'malaria',
+                'icd_code': '1F40',
+                'description': 'Parasitic disease transmitted by mosquitoes',
+                'is_contagious': False,
+                'common_symptoms': malaria_symptoms,
+                'symptom_weights': malaria_weights,
+                'mild_threshold': 15,
+                'moderate_threshold': 35,
+                'severe_threshold': 60,
+                'emergency_threshold': 80,
+                'common_treatments': [
+                    'Antimalarial medications',
+                    'Pain relievers',
+                    'IV fluids for severe cases'
+                ]
+            }
         )
+        return disease
     
     @classmethod
     def create_pneumonia_disease(cls):
@@ -628,24 +632,28 @@ class Disease(models.Model):
             'blue_lips_or_fingernails': 25, 'severe_chest_pain': 20
         }
         
-        return cls.objects.create(
+        disease, created = cls.objects.get_or_create(
             name='Pneumonia',
-            disease_type='pneumonia',
-            icd_code='J18.9',
-            description='Lung infection inflaming air sacs',
-            is_contagious=True,
-            common_symptoms=pneumonia_symptoms,
-            symptom_weights=pneumonia_weights,
-            mild_threshold=20,
-            moderate_threshold=40,
-            severe_threshold=65,
-            emergency_threshold=85,
-            common_treatments=[
-                'Antibiotics for bacterial',
-                'Antivirals for viral',
-                'Oxygen therapy for severe'
-            ]
+            defaults={
+                'disease_type': 'pneumonia',
+                'icd_code': 'J18.9',
+                'description': 'Lung infection inflaming air sacs',
+                'is_contagious': True,
+                'common_symptoms': pneumonia_symptoms,
+                'symptom_weights': pneumonia_weights,
+                'mild_threshold': 20,
+                'moderate_threshold': 40,
+                'severe_threshold': 65,
+                'emergency_threshold': 85,
+                'common_treatments': [
+                    'Antibiotics for bacterial',
+                    'Antivirals for viral',
+                    'Oxygen therapy for severe'
+                ]
+            }
         )
+        return disease
+
 
 class SymptomCheckerSession(models.Model):
     """
@@ -658,7 +666,7 @@ class SymptomCheckerSession(models.Model):
         blank=True,
         related_name='symptom_sessions'
     )
-    session_id = models.CharField(max_length=100, unique=True)
+    session_id = models.CharField(max_length=100, unique=True, blank=True)
     
     # Symptoms data
     selected_symptoms = models.JSONField(default=list)
@@ -707,6 +715,12 @@ class SymptomCheckerSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        # Auto-generate session_id if not provided
+        if not self.session_id:
+            self.session_id = str(uuid.uuid4())
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Symptom check #{self.id} by {self.user or 'Anonymous'}"
 
@@ -715,6 +729,11 @@ class SymptomCheckerSession(models.Model):
         all_symptoms = self.get_all_symptoms()
         if not all_symptoms:
             return
+        
+        # Ensure diseases exist
+        if not Disease.objects.exists():
+            Disease.create_malaria_disease()
+            Disease.create_pneumonia_disease()
         
         max_score = 0
         primary_disease = None
@@ -810,6 +829,7 @@ class SymptomCheckerSession(models.Model):
             
         return warnings
 
+
 class DiseaseAnalysis(models.Model):
     """
     Analysis results for a disease in a symptom session
@@ -836,6 +856,7 @@ class DiseaseAnalysis(models.Model):
     
     def __str__(self):
         return f"{self.disease.name} analysis ({self.calculated_score} pts)"
+
 
 class PatientDiagnosis(models.Model):
     """
@@ -955,6 +976,7 @@ class PatientDiagnosis(models.Model):
             return self.treatment_plan
         return None
 
+
 class MedicalTest(models.Model):
     """
     Standard medical tests that can be ordered
@@ -978,6 +1000,7 @@ class MedicalTest(models.Model):
     
     def __str__(self):
         return self.name
+
 
 class PatientTestResult(models.Model):
     """
@@ -1007,6 +1030,7 @@ class PatientTestResult(models.Model):
     
     def __str__(self):
         return f"{self.test} result for {self.diagnosis.patient}"
+
 
 class TreatmentPlan(models.Model):
     """

@@ -13,6 +13,13 @@ import PatientAppointments from './pages/patient/Appointments';
 import ProviderDashboard from './pages/provider/Dashboard';
 import AdminDashboard from './pages/admin/Dashboard';
 import NurseDashboard from './pages/nurse/Dashboard';
+import ClinicSessionReview from './pages/admin/ClinicSessionReview';
+import ClinicDiseaseConfirmation from './pages/admin/ClinicDiseaseConfirmation';
+import PatientDiagnosesPage from './pages/patient/PatientDiagnosesPage';
+import ClinicSymptomDashboard from './pages/admin/ClinicSymptomDashboard';
+import SymptomHistoryPage from './pages/patient/SymptomHistoryPage';
+import SymptomResultsPage from './pages/patient/SymptomResultsPage';
+
 
 // Provider pages
 import AppointmentManagement from './pages/nurse/AppointmentManagement';
@@ -20,6 +27,7 @@ import AppointmentManagement from './pages/nurse/AppointmentManagement';
 // Patient pages
 import EmergencyAmbulanceRequest from './pages/patient/EmergencyAmbulanceRequest';
 import EmergencyApproval from './pages/emergency/EmergencyApproval';
+import SelfCheckPage from './pages/patient/SelfCheck';
 
 // Nurse pages
 import NurseAppointmentManagement from './pages/nurse/AppointmentManagement';
@@ -73,8 +81,26 @@ function App() {
                 <EmergencyAmbulanceRequest />
               </PatientRoute>
             } />
-            
-            
+            <Route path="patient/symptom-checker" element={
+              <PatientRoute>
+                <SelfCheckPage />
+              </PatientRoute>
+            } />
+            <Route path="/patient/diagnoses" element={
+              <PatientRoute>
+              <PatientDiagnosesPage />
+            </PatientRoute>
+          } />
+            <Route path="/patient/symptom-history" element={
+              <PatientRoute>
+                <SymptomHistoryPage />
+              </PatientRoute>
+            } />
+            <Route path="/patient/symptom-checker/results/:sessionId" element={
+             <PatientRoute>
+                <SymptomResultsPage />
+              </PatientRoute>
+                     } />
             {/* Catch-all patient routes */}
             <Route path="/patient/*" element={
               <PatientRoute>
@@ -171,6 +197,11 @@ function App() {
                 <div>Medical Records - Coming Soon</div>
               </ProtectedRoute>
             } />
+            <Route path="/doctor/clinic-session-review" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ClinicSessionReview />
+              </ProtectedRoute>
+            } />
             <Route path="/doctor/emergencies" element={
               <ProtectedRoute requiredRole="Doctor">
                 <div>Emergency Cases - Coming Soon</div>
@@ -186,6 +217,18 @@ function App() {
                 <div>Prescriptions - Coming Soon</div>
               </ProtectedRoute>
             } />
+            <Route path="/doctor/clinic-disease-confirmation" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ClinicDiseaseConfirmation />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/clinic-symptoms-check" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ClinicSymptomDashboard />
+              </ProtectedRoute>
+            } />
+
+
             <Route path="/doctor/reports" element={
               <ProtectedRoute requiredRole="Doctor">
                 <div>Clinical Reports - Coming Soon</div>

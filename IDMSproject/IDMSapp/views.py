@@ -1338,9 +1338,23 @@ class DiseaseViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def initialize(self, request):
         """Initialize with sample diseases"""
-        Disease.create_malaria_disease()
-        Disease.create_pneumonia_disease()
-        return Response({"status": "Sample diseases created"})
+        try:
+            malaria = Disease.create_malaria_disease()
+            pneumonia = Disease.create_pneumonia_disease()
+            
+            return Response({
+                "status": "Sample diseases created",
+                "diseases": [
+                    {"name": malaria.name, "created": True},
+                    {"name": pneumonia.name, "created": True}
+                ]
+            })
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to initialize diseases: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class SymptomCheckerSessionViewSet(viewsets.ModelViewSet):
     serializer_class = SymptomCheckerSessionSerializer
@@ -1348,21 +1362,184 @@ class SymptomCheckerSessionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         if self.request.user.is_staff:
-            return SymptomCheckerSession.objects.all()
-        return SymptomCheckerSession.objects.filter(user=self.request.user)
+            return SymptomCheckerSession.objects.all().order_by('-created_at')
+        return SymptomCheckerSession.objects.filter(
+            user=self.request.user
+        ).order_by('-created_at')
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        """Create session with user and auto-analyze symptoms"""
+        try:
+            # Ensure diseases exist before creating session
+            if not Disease.objects.exists():
+                try:
+                    Disease.create_malaria_disease()
+                    Disease.create_pneumonia_disease()
+                except Exception as disease_error:
+                    print(f"Warning: Could not create sample diseases: {disease_error}")
+            
+            # Save with current user
+            session = serializer.save(user=self.request.user)
+            
+            # Try to analyze symptoms after creation
+            try:
+                session.analyze_symptoms()
+            except Exception as analysis_error:
+                print(f"Warning: Could not analyze symptoms: {analysis_error}")
+                # Don't fail the creation if analysis fails
+                
+        except Exception as e:
+            print(f"Error in perform_create: {e}")
+            raise
+
+    def create(self, request, *args, **kwargs):
+        """Override create to handle errors better"""
+        try:
+            # Validate request data
+            if not request.data.get('selected_symptoms') and not request.data.get('custom_symptoms'):
+                return Response(
+                    {"error": "At least one symptom must be provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Ensure arrays exist and are properly formatted
+            data = request.data.copy()
+            data['selected_symptoms'] = data.get('selected_symptoms', [])
+            data['custom_symptoms'] = data.get('custom_symptoms', [])
+            
+            # Validate temperature and heart_rate if provided
+            if data.get('temperature'):
+                try:
+                    temp = float(data['temperature'])
+                    if temp < 90 or temp > 110:
+                        return Response(
+                            {"error": "Temperature must be between 90°F and 110°F"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except (ValueError, TypeError):
+                    return Response(
+                        {"error": "Invalid temperature format"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            if data.get('heart_rate'):
+                try:
+                    hr = int(data['heart_rate'])
+                    if hr < 30 or hr > 220:
+                        return Response(
+                            {"error": "Heart rate must be between 30 and 220 BPM"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except (ValueError, TypeError):
+                    return Response(
+                        {"error": "Invalid heart rate format"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Create serializer with validated data
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Perform creation
+            self.perform_create(serializer)
+            
+            headers = self.get_success_headers(serializer.data)
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED,
+                headers=headers
+            )
+            
+        except ValidationError as ve:
+            return Response(
+                {"error": f"Validation error: {str(ve)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            print(f"Unexpected error in create: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {"error": f"Failed to create symptom session: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['post'])
     def create_diagnosis(self, request, pk=None):
         """Convert session to patient diagnosis"""
-        session = self.get_object()
-        diagnosis = session.create_patient_diagnosis(request.user)
-        return Response(
-            PatientDiagnosisSerializer(diagnosis, context={'request': request}).data,
-            status=status.HTTP_201_CREATED
-        )
+        try:
+            session = self.get_object()
+            diagnosis = session.create_patient_diagnosis(request.user)
+            
+            if diagnosis:
+                return Response(
+                    PatientDiagnosisSerializer(
+                        diagnosis, 
+                        context={'request': request}
+                    ).data,
+                    status=status.HTTP_201_CREATED
+                )
+            else:
+                return Response(
+                    {"error": "Could not create diagnosis. No primary disease identified."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            print(f"Error creating diagnosis: {e}")
+            return Response(
+                {"error": f"Failed to create diagnosis: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def add_custom_symptom(self, request, pk=None):
+        """Add custom symptom to session"""
+        try:
+            session = self.get_object()
+            symptom = request.data.get('symptom', '').strip()
+            
+            if not symptom:
+                return Response(
+                    {"error": "Symptom is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            session.add_custom_symptom(symptom)
+            
+            # Try to re-analyze with new symptom
+            try:
+                session.analyze_symptoms()
+            except Exception as analysis_error:
+                print(f"Warning: Could not re-analyze symptoms: {analysis_error}")
+            
+            return Response(
+                self.get_serializer(session).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            print(f"Error adding custom symptom: {e}")
+            return Response(
+                {"error": f"Failed to add symptom: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def reanalyze(self, request, pk=None):
+        """Re-analyze session symptoms"""
+        try:
+            session = self.get_object()
+            session.analyze_symptoms()
+            
+            return Response(
+                self.get_serializer(session).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            print(f"Error reanalyzing symptoms: {e}")
+            return Response(
+                {"error": f"Failed to reanalyze: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class DiseaseAnalysisViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = DiseaseAnalysisSerializer
@@ -1371,8 +1548,11 @@ class DiseaseAnalysisViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         session_id = self.request.query_params.get('session_id')
         if session_id:
-            return DiseaseAnalysis.objects.filter(session_id=session_id)
+            return DiseaseAnalysis.objects.filter(
+                session_id=session_id
+            ).order_by('-calculated_score')
         return DiseaseAnalysis.objects.none()
+
 
 class PatientDiagnosisViewSet(viewsets.ModelViewSet):
     serializer_class = PatientDiagnosisSerializer
@@ -1383,54 +1563,113 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
         if user.is_staff and user.groups.filter(name='Doctors').exists():
             return PatientDiagnosis.objects.filter(
                 Q(treating_doctor=user) | Q(treating_doctor__isnull=True)
-            )
+            ).order_by('-created_at')
         elif user.is_staff:
-            return PatientDiagnosis.objects.all()
-        return PatientDiagnosis.objects.filter(patient=user)
+            return PatientDiagnosis.objects.all().order_by('-created_at')
+        return PatientDiagnosis.objects.filter(
+            patient=user
+        ).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        """Create diagnosis with patient as current user"""
+        serializer.save(patient=self.request.user)
 
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         """Doctor confirms diagnosis"""
-        diagnosis = self.get_object()
-        serializer = DiagnosisConfirmationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        diagnosis.confirm_diagnosis(
-            doctor=request.user,
-            notes=serializer.validated_data.get('notes', ''),
-            test_results=serializer.validated_data.get('test_results', None)
-        )
-        return Response(self.get_serializer(diagnosis).data)
+        try:
+            diagnosis = self.get_object()
+            serializer = DiagnosisConfirmationSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            diagnosis.confirm_diagnosis(
+                doctor=request.user,
+                notes=serializer.validated_data.get('notes', ''),
+                test_results=serializer.validated_data.get('test_results', None)
+            )
+            
+            return Response(
+                self.get_serializer(diagnosis).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to confirm diagnosis: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Doctor rejects diagnosis"""
+        try:
+            diagnosis = self.get_object()
+            notes = request.data.get('notes', '')
+            
+            diagnosis.reject_diagnosis(
+                doctor=request.user,
+                notes=notes
+            )
+            
+            return Response(
+                self.get_serializer(diagnosis).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to reject diagnosis: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['post'])
     def assign_doctor(self, request, pk=None):
         """Assign doctor to diagnosis"""
-        diagnosis = self.get_object()
-        serializer = DoctorAssignmentSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        diagnosis.treating_doctor = serializer.validated_data['doctor_id']
-        diagnosis.save()
-        return Response(self.get_serializer(diagnosis).data)
+        try:
+            diagnosis = self.get_object()
+            serializer = DoctorAssignmentSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            diagnosis.treating_doctor = serializer.validated_data['doctor_id']
+            diagnosis.save()
+            
+            return Response(
+                self.get_serializer(diagnosis).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to assign doctor: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['get'])
     def treatment_plan(self, request, pk=None):
         """Get treatment plan for diagnosis"""
-        diagnosis = self.get_object()
-        treatment_plan = diagnosis.get_treatment_plan()
-        if treatment_plan:
+        try:
+            diagnosis = self.get_object()
+            treatment_plan = diagnosis.get_treatment_plan()
+            
+            if treatment_plan:
+                return Response(
+                    TreatmentPlanSerializer(treatment_plan).data,
+                    status=status.HTTP_200_OK
+                )
+            
             return Response(
-                TreatmentPlanSerializer(treatment_plan).data
+                {"detail": "No treatment plan exists"},
+                status=status.HTTP_404_NOT_FOUND
             )
-        return Response(
-            {"detail": "No treatment plan exists"},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to get treatment plan: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class MedicalTestViewSet(viewsets.ModelViewSet):
     queryset = MedicalTest.objects.all()
     serializer_class = MedicalTestSerializer
     permission_classes = [permissions.IsAuthenticated]
+
 
 class PatientTestResultViewSet(viewsets.ModelViewSet):
     serializer_class = PatientTestResultSerializer
@@ -1439,11 +1678,14 @@ class PatientTestResultViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         diagnosis_id = self.request.query_params.get('diagnosis_id')
         if diagnosis_id:
-            return PatientTestResult.objects.filter(diagnosis_id=diagnosis_id)
+            return PatientTestResult.objects.filter(
+                diagnosis_id=diagnosis_id
+            ).order_by('-performed_at')
         return PatientTestResult.objects.none()
 
     def perform_create(self, serializer):
         serializer.save(performed_by=self.request.user)
+
 
 class TreatmentPlanViewSet(viewsets.ModelViewSet):
     serializer_class = TreatmentPlanSerializer
@@ -1453,7 +1695,15 @@ class TreatmentPlanViewSet(viewsets.ModelViewSet):
         diagnosis_id = self.request.query_params.get('diagnosis_id')
         if diagnosis_id:
             return TreatmentPlan.objects.filter(diagnosis_id=diagnosis_id)
-        return TreatmentPlan.objects.none()
+        
+        # If no diagnosis_id, show plans for current user
+        user = self.request.user
+        if user.is_staff and user.groups.filter(name='Doctors').exists():
+            return TreatmentPlan.objects.filter(supervising_doctor=user)
+        elif user.is_staff:
+            return TreatmentPlan.objects.all()
+        else:
+            return TreatmentPlan.objects.filter(diagnosis__patient=user)
 
     def perform_create(self, serializer):
         diagnosis = serializer.validated_data['diagnosis']
@@ -1463,21 +1713,52 @@ class TreatmentPlanViewSet(viewsets.ModelViewSet):
                 supervising_doctor=diagnosis.treating_doctor
             )
         else:
-            serializer.save(created_by=self.request.user)
+            serializer.save(
+                created_by=self.request.user,
+                supervising_doctor=self.request.user
+            )
 
     @action(detail=True, methods=['post'])
     def add_medication(self, request, pk=None):
         """Add medication to treatment plan"""
-        treatment_plan = self.get_object()
-        serializer = MedicationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        treatment_plan.add_medication(
-            name=serializer.validated_data['name'],
-            dosage=serializer.validated_data['dosage'],
-            frequency=serializer.validated_data['frequency']
-        )
-        return Response(self.get_serializer(treatment_plan).data)
+        try:
+            treatment_plan = self.get_object()
+            serializer = MedicationSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            treatment_plan.add_medication(
+                name=serializer.validated_data['name'],
+                dosage=serializer.validated_data['dosage'],
+                frequency=serializer.validated_data['frequency']
+            )
+            
+            return Response(
+                self.get_serializer(treatment_plan).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to add medication: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """Mark treatment plan as completed"""
+        try:
+            treatment_plan = self.get_object()
+            treatment_plan.mark_completed()
+            
+            return Response(
+                self.get_serializer(treatment_plan).data,
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to complete treatment: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class DoctorViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
@@ -1485,6 +1766,7 @@ class DoctorViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return User.objects.filter(groups__name='Doctors')
+
 
 class DoctorCasesViewSet(viewsets.GenericViewSet):
     serializer_class = PatientDiagnosisSerializer
@@ -1494,7 +1776,7 @@ class DoctorCasesViewSet(viewsets.GenericViewSet):
         if self.request.user.groups.filter(name='Doctors').exists():
             return PatientDiagnosis.objects.filter(
                 treating_doctor=self.request.user
-            )
+            ).order_by('-created_at')
         return PatientDiagnosis.objects.none()
 
     def list(self, request):
@@ -1512,66 +1794,75 @@ class DoctorCasesViewSet(viewsets.GenericViewSet):
         )
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
-        
-class PreventionTipViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for prevention tips
-    """
-    queryset = PreventionTip.objects.all()
-    serializer_class = PreventionTipSerializer
-    permission_classes = [AllowAny]  # Tips are public information
-    
-    def get_queryset(self):
-        """Filter tips by disease or category"""
-        queryset = super().get_queryset()
-        
-        disease_id = self.request.query_params.get('disease_id')
-        category = self.request.query_params.get('category')
-        disease_type = self.request.query_params.get('disease_type')
-        
-        if disease_id:
-            queryset = queryset.filter(disease_id=disease_id)
-        
-        if category:
-            queryset = queryset.filter(category=category)
-        
-        if disease_type:
-            queryset = queryset.filter(disease__disease_type=disease_type)
-        
-        return queryset.order_by('priority', 'category')
-    
+
     @action(detail=False, methods=['get'])
-    def by_disease(self, request):
-        """Get tips grouped by disease"""
-        disease_name = request.query_params.get('disease')
-        if not disease_name:
-            return Response(
-                {'error': 'Disease parameter required'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    def pending_cases(self, request):
+        """Get cases pending doctor review"""
+        queryset = PatientDiagnosis.objects.filter(
+            status='self_reported'
+        ).order_by('-created_at')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
         
-        try:
-            disease = Disease.objects.get(name__icontains=disease_name)
-            tips = self.get_queryset().filter(disease=disease)
-            
-            # Group by category
-            grouped_tips = {}
-            for tip in tips:
-                if tip.category not in grouped_tips:
-                    grouped_tips[tip.category] = []
-                grouped_tips[tip.category].append(PreventionTipSerializer(tip).data)
-            
-            return Response({
-                'disease': disease.name,
-                'tips_by_category': grouped_tips,
-                'total_tips': tips.count()
-            })
+# class PreventionTipViewSet(viewsets.ModelViewSet):
+#     """
+#     ViewSet for prevention tips
+#     """
+#     queryset = PreventionTip.objects.all()
+#     serializer_class = PreventionTipSerializer
+#     permission_classes = [AllowAny]  # Tips are public information
+    
+#     def get_queryset(self):
+#         """Filter tips by disease or category"""
+#         queryset = super().get_queryset()
         
-        except Disease.DoesNotExist:
-            return Response(
-                {'error': f'Disease "{disease_name}" not found'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
+#         disease_id = self.request.query_params.get('disease_id')
+#         category = self.request.query_params.get('category')
+#         disease_type = self.request.query_params.get('disease_type')
+        
+#         if disease_id:
+#             queryset = queryset.filter(disease_id=disease_id)
+        
+#         if category:
+#             queryset = queryset.filter(category=category)
+        
+#         if disease_type:
+#             queryset = queryset.filter(disease__disease_type=disease_type)
+        
+#         return queryset.order_by('priority', 'category')
+    
+#     @action(detail=False, methods=['get'])
+#     def by_disease(self, request):
+#         """Get tips grouped by disease"""
+#         disease_name = request.query_params.get('disease')
+#         if not disease_name:
+#             return Response(
+#                 {'error': 'Disease parameter required'}, 
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+        
+#         try:
+#             disease = Disease.objects.get(name__icontains=disease_name)
+#             tips = self.get_queryset().filter(disease=disease)
+            
+#             # Group by category
+#             grouped_tips = {}
+#             for tip in tips:
+#                 if tip.category not in grouped_tips:
+#                     grouped_tips[tip.category] = []
+#                 grouped_tips[tip.category].append(PreventionTipSerializer(tip).data)
+            
+#             return Response({
+#                 'disease': disease.name,
+#                 'tips_by_category': grouped_tips,
+#                 'total_tips': tips.count()
+#             })
+        
+#         except Disease.DoesNotExist:
+#             return Response(
+#                 {'error': f'Disease "{disease_name}" not found'}, 
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
 
 # class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
 #     """

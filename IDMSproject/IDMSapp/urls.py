@@ -19,14 +19,13 @@ router.register(r'clinics', ClinicViewSet)
 router.register(r'appointments', AppointmentViewSet)
 
 # Medical data
-router.register(r'diseases', DiseaseViewSet, basename='disease')
-router.register(r'symptom-sessions', SymptomCheckerSessionViewSet, basename='symptom-session')
-router.register(r'disease-analyses', DiseaseAnalysisViewSet, basename='disease-analysis')
-router.register(r'patient-diagnoses', PatientDiagnosisViewSet, basename='patient-diagnosis')
-router.register(r'medical-tests', MedicalTestViewSet, basename='medical-test')
-router.register(r'test-results', PatientTestResultViewSet, basename='test-result')
-router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-plan')
-router.register(r'prevention-tips', PreventionTipViewSet, basename='prevention-tip')
+router.register(r'diseases', DiseaseViewSet, basename='diseases')
+router.register(r'symptom-sessions', SymptomCheckerSessionViewSet, basename='symptom-sessions')
+router.register(r'disease-analyses', DiseaseAnalysisViewSet, basename='disease-analyses')
+router.register(r'patient-diagnoses', PatientDiagnosisViewSet, basename='patient-diagnoses')
+router.register(r'medical-tests', MedicalTestViewSet, basename='medical-tests')
+router.register(r'test-results', PatientTestResultViewSet, basename='test-results')
+router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-plans')
 
 # Emergency services
 router.register(r'emergency-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-request')

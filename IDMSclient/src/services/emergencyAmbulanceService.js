@@ -1,797 +1,778 @@
-// src/services/emergencyAmbulanceService.js - UPDATED WITH APPROVAL SUPPORT
-import { healthcareAPI } from './api';
+// src/services/emergencyAmbulanceService.js
+import api from './api.js';
+import { apiUtils, authAPI } from './api.js';
 
 /**
- * Emergency Ambulance Service with Patient Auto-Detection and Approval System
+ * Emergency Ambulance Service API
+ * Provides comprehensive functionality for managing emergency ambulance requests
  */
-class EmergencyAmbulanceService {
-  
-  // =========================== EMERGENCY REQUEST MANAGEMENT ===========================
-  
+export const emergencyAmbulanceService = {
+  // =============================================
+  // CORE CRUD OPERATIONS
+  // =============================================
+
   /**
-   * Create new emergency ambulance request with automatic patient detection
+   * Get all emergency ambulance requests with filtering
+   * @param {Object} params - Query parameters for filtering
+   * @returns {Promise} API response with emergency requests
    */
-  async createEmergencyRequest(requestData) {
+  list: async (params = {}) => {
     try {
-      console.log('🚨 Creating emergency ambulance request:', requestData);
-      
-      // Auto-detect patient if not provided
-      let processedData = { ...requestData };
-      if (!processedData.patient) {
-        const currentUser = this.getCurrentUser();
-        
-        if (!currentUser) {
-          throw new Error('User must be logged in to create emergency request');
-        }
-        
-        // For patients, use their own patient ID
-        if (currentUser.role?.name === 'Patient') {
-          processedData.patient = await this.getPatientIdForUser(currentUser.id);
-        } else {
-          // For staff members, patient field should be provided explicitly
-          throw new Error('Patient must be specified when creating emergency request as staff member');
-        }
-      }
-      
+      const response = await api.get('/emergency-ambulance-requests/', { params });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get a specific emergency request by ID
+   * @param {number|string} id - Emergency request ID
+   * @returns {Promise} API response with emergency request details
+   */
+  get: async (id) => {
+    try {
+      const response = await api.get(`/emergency-ambulance-requests/${id}/`);
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Create a new emergency ambulance request
+   * @param {Object} requestData - Emergency request data
+   * @returns {Promise} API response with created request
+   */
+  create: async (requestData) => {
+    try {
       // Validate required fields
-      const validation = this.validateEmergencyRequest(processedData);
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join(', '));
+      const requiredFields = ['location', 'condition_description'];
+      const missingFields = requiredFields.filter(field => !requestData[field]);
+      
+      if (missingFields.length > 0) {
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
-      
-      // Add approval tracking fields
-      processedData.approval_status = 'pending';
-      processedData.created_by = this.getCurrentUser()?.id;
-      processedData.created_by_name = this.getCurrentUser()?.name || this.getCurrentUser()?.email;
-      
-      const response = await healthcareAPI.emergencies.create(processedData);
-      
-      console.log('✅ Emergency request created:', response.data);
-      
-      return {
-        success: true,
-        data: response.data,
-        request: response.data,
-        message: 'Emergency ambulance request submitted successfully'
+
+      // Clean and format the data according to backend expectations
+      const cleanData = {
+        location: requestData.location.trim(),
+        condition_description: requestData.condition_description.trim(),
+        suspected_disease: requestData.suspected_disease?.trim() || '',
+        urgency_level: requestData.urgency_level || 'standard',
+        additional_notes: requestData.additional_notes?.trim() || '',
+        // Only include clinic if it's not empty
+        ...(requestData.clinic && { clinic: parseInt(requestData.clinic) }),
+        // Only include GPS coordinates if they exist
+        ...(requestData.gps_coordinates && { gps_coordinates: requestData.gps_coordinates.trim() })
       };
+
+      console.log('Sending emergency request data:', cleanData);
+      const response = await api.post('/emergency-ambulance-requests/', cleanData);
+      return response;
     } catch (error) {
-      console.error('❌ Error creating emergency request:', error);
-      throw this.handleError(error, 'Failed to create emergency request');
+      console.error('Create emergency request error:', error.response?.data);
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
   /**
-   * Get patient ID for a user
+   * Update an emergency request
+   * @param {number|string} id - Emergency request ID
+   * @param {Object} updateData - Data to update
+   * @returns {Promise} API response with updated request
    */
-  async getPatientIdForUser(userId) {
+  update: async (id, updateData) => {
     try {
-      // Try to get patient record for this user
-      const response = await healthcareAPI.patients.list({ user: userId });
-      
-      if (response.data?.results?.length > 0) {
-        return response.data.results[0].id;
-      } else if (response.data?.length > 0) {
-        return response.data[0].id;
-      } else {
-        throw new Error('No patient record found for current user. Please contact support.');
-      }
+      const response = await api.patch(`/emergency-ambulance-requests/${id}/`, updateData);
+      return response;
     } catch (error) {
-      console.error('Error getting patient ID:', error);
-      throw new Error('Unable to find patient record for current user');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
   /**
-   * Create emergency request for specific patient (staff use)
+   * Delete an emergency request
+   * @param {number|string} id - Emergency request ID
+   * @returns {Promise} API response
    */
-  async createEmergencyRequestForPatient(patientId, requestData) {
+  delete: async (id) => {
     try {
-      const processedData = {
-        ...requestData,
-        patient: patientId
-      };
-      
-      return await this.createEmergencyRequest(processedData);
+      const response = await api.delete(`/emergency-ambulance-requests/${id}/`);
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to create emergency request for patient');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
-  // =========================== APPROVAL SYSTEM ===========================
-  
+  },
+
+  // =============================================
+  // WORKFLOW MANAGEMENT ACTIONS
+  // =============================================
+
   /**
-   * Approve emergency request
+   * Approve an emergency request
+   * @param {number|string} id - Emergency request ID
+   * @param {Object} approvalData - Approval details
+   * @returns {Promise} API response with approved request
    */
-  async approveEmergencyRequest(requestId, approvalData) {
+  approve: async (id, approvalData = {}) => {
     try {
-      console.log('✅ Approving emergency request:', requestId, approvalData);
-      
-      const currentUser = this.getCurrentUser();
-      if (!this.canApproveRequests()) {
-        throw new Error('You do not have permission to approve emergency requests');
-      }
-      
-      const updateData = {
-        approval_status: 'approved',
-        approved_by: currentUser.id,
-        approved_by_name: currentUser.name || currentUser.email,
-        approved_at: new Date().toISOString(),
-        approval_comments: approvalData.comments || '',
-        priority_override: approvalData.priority || null,
-        recommended_hospital: approvalData.recommendedHospital || null,
-        urgency_level: approvalData.urgencyLevel || null,
-        additional_notes: approvalData.additionalNotes || null
-      };
-      
-      // Update the request with approval data
-      const response = await healthcareAPI.emergencies.update(requestId, updateData);
-      
-      console.log('✅ Emergency request approved:', response.data);
-      
-      return {
-        success: true,
-        data: response.data,
-        request: response.data,
-        message: 'Emergency request approved successfully'
-      };
+      const response = await api.post(`/emergency-ambulance-requests/${id}/approve/`, {
+        comments: approvalData.comments || '',
+        priority: approvalData.priority || '',
+        urgency_level: approvalData.urgency_level || ''
+      });
+      return response;
     } catch (error) {
-      console.error('❌ Error approving emergency request:', error);
-      throw this.handleError(error, 'Failed to approve emergency request');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
   /**
-   * Reject emergency request
+   * Reject an emergency request
+   * @param {number|string} id - Emergency request ID
+   * @param {Object} rejectionData - Rejection details
+   * @returns {Promise} API response with rejected request
    */
-  async rejectEmergencyRequest(requestId, rejectionData) {
+  reject: async (id, rejectionData = {}) => {
     try {
-      console.log('❌ Rejecting emergency request:', requestId, rejectionData);
-      
-      const currentUser = this.getCurrentUser();
-      if (!this.canApproveRequests()) {
-        throw new Error('You do not have permission to reject emergency requests');
-      }
-      
-      const updateData = {
-        approval_status: 'rejected',
-        approved_by: currentUser.id,
-        approved_by_name: currentUser.name || currentUser.email,
-        approved_at: new Date().toISOString(),
-        approval_comments: rejectionData.comments || '',
-        rejection_reason: rejectionData.reason || null,
-        additional_notes: rejectionData.additionalNotes || null
-      };
-      
-      // Update the request with rejection data
-      const response = await healthcareAPI.emergencies.update(requestId, updateData);
-      
-      console.log('❌ Emergency request rejected:', response.data);
-      
-      return {
-        success: true,
-        data: response.data,
-        request: response.data,
-        message: 'Emergency request rejected'
-      };
+      const response = await api.post(`/emergency-ambulance-requests/${id}/reject/`, {
+        comments: rejectionData.comments || '',
+        reason: rejectionData.reason || 'No reason provided'
+      });
+      return response;
     } catch (error) {
-      console.error('❌ Error rejecting emergency request:', error);
-      throw this.handleError(error, 'Failed to reject emergency request');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
   /**
-   * Get emergency requests by approval status
+   * Dispatch ambulance to emergency request
+   * @param {number|string} id - Emergency request ID
+   * @param {Object} dispatchData - Dispatch details
+   * @returns {Promise} API response with dispatched request
    */
-  async getEmergencyRequestsByApprovalStatus(approvalStatus, params = {}) {
+  dispatch: async (id, dispatchData = {}) => {
     try {
-      const queryParams = {
-        ...params,
-        approval_status: approvalStatus,
-        ordering: '-request_time'
-      };
-      
-      const response = await healthcareAPI.emergencies.list(queryParams);
-      
-      return {
-        success: true,
-        data: response.data,
-        requests: response.data.results || response.data,
-        count: response.data.count || 0
-      };
+      const response = await api.post(`/emergency-ambulance-requests/${id}/dispatch/`, {
+        ambulance_id: dispatchData.ambulance_id || '',
+        hospital_destination: dispatchData.hospital_destination || ''
+      });
+      return response;
     } catch (error) {
-      throw this.handleError(error, `Failed to fetch ${approvalStatus} emergency requests`);
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
-  /**
-   * Get pending approval requests
-   */
-  async getPendingApprovalRequests(params = {}) {
-    return await this.getEmergencyRequestsByApprovalStatus('pending', params);
-  }
-  
-  /**
-   * Get approved requests
-   */
-  async getApprovedRequests(params = {}) {
-    return await this.getEmergencyRequestsByApprovalStatus('approved', params);
-  }
-  
-  /**
-   * Get rejected requests
-   */
-  async getRejectedRequests(params = {}) {
-    return await this.getEmergencyRequestsByApprovalStatus('rejected', params);
-  }
-  
-  /**
-   * Bulk approve requests
-   */
-  async bulkApproveRequests(requestIds, approvalData) {
-    try {
-      const currentUser = this.getCurrentUser();
-      if (!this.canApproveRequests()) {
-        throw new Error('You do not have permission to approve emergency requests');
-      }
-      
-      const promises = requestIds.map(id => 
-        this.approveEmergencyRequest(id, {
-          ...approvalData,
-          comments: approvalData.comments || `Bulk approved by ${currentUser.name || currentUser.email}`
-        })
-      );
-      
-      const results = await Promise.all(promises);
-      
-      return {
-        success: true,
-        approvedCount: results.filter(r => r.success).length,
-        failedCount: results.filter(r => !r.success).length,
-        results: results
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to bulk approve emergency requests');
-    }
-  }
-  
-  /**
-   * Bulk reject requests
-   */
-  async bulkRejectRequests(requestIds, rejectionData) {
-    try {
-      const currentUser = this.getCurrentUser();
-      if (!this.canApproveRequests()) {
-        throw new Error('You do not have permission to reject emergency requests');
-      }
-      
-      const promises = requestIds.map(id => 
-        this.rejectEmergencyRequest(id, {
-          ...rejectionData,
-          comments: rejectionData.comments || `Bulk rejected by ${currentUser.name || currentUser.email}`
-        })
-      );
-      
-      const results = await Promise.all(promises);
-      
-      return {
-        success: true,
-        rejectedCount: results.filter(r => r.success).length,
-        failedCount: results.filter(r => !r.success).length,
-        results: results
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to bulk reject emergency requests');
-    }
-  }
-  
-  // =========================== EXISTING METHODS (updated) ===========================
-  
-  /**
-   * Get emergency ambulance requests with filtering
-   */
-  async getEmergencyRequests(params = {}) {
-    try {
-      const response = await healthcareAPI.emergencies.list(params);
-      
-      return {
-        success: true,
-        data: response.data,
-        requests: response.data.results || response.data,
-        count: response.data.count || 0
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to fetch emergency requests');
-    }
-  }
-  
-  /**
-   * Get single emergency request by ID
-   */
-  async getEmergencyRequest(id) {
-    try {
-      const response = await healthcareAPI.emergencies.get(id);
-      
-      return {
-        success: true,
-        data: response.data,
-        request: response.data
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to fetch emergency request');
-    }
-  }
-  
+  },
+
   /**
    * Update emergency request status
+   * @param {number|string} id - Emergency request ID
+   * @param {string} status - New status (P, D, A, T, C)
+   * @param {Object} additionalData - Additional status data
+   * @returns {Promise} API response with updated request
    */
-  async updateEmergencyStatus(id, status, additionalData = {}) {
+  updateStatus: async (id, status, additionalData = {}) => {
     try {
-      const response = await healthcareAPI.emergencies.updateStatus(id, status, additionalData);
-      
-      return {
-        success: true,
-        data: response.data,
-        request: response.data,
-        message: `Emergency request status updated to ${this.getStatusText(status)}`
-      };
+      // Validate status
+      const validStatuses = ['P', 'D', 'A', 'T', 'C'];
+      if (!validStatuses.includes(status)) {
+        throw new Error(`Invalid status: ${status}. Valid statuses: ${validStatuses.join(', ')}`);
+      }
+
+      const response = await api.post(`/emergency-ambulance-requests/${id}/update_status/`, {
+        status,
+        ...additionalData
+      });
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to update emergency status');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
+  // =============================================
+  // BULK OPERATIONS
+  // =============================================
+
   /**
-   * Dispatch ambulance to emergency request (requires approval)
+   * Bulk approve multiple emergency requests
+   * @param {Array} requestIds - Array of request IDs
+   * @param {Object} approvalData - Common approval data
+   * @returns {Promise} Bulk operation results
    */
-  async dispatchAmbulance(requestId, ambulanceData) {
+  bulkApprove: async (requestIds, approvalData = {}) => {
     try {
-      // Check if request is approved
-      const request = await this.getEmergencyRequest(requestId);
-      if (!request.success) {
-        throw new Error('Emergency request not found');
+      console.log('Bulk approving emergency requests:', requestIds);
+      
+      const promises = requestIds.map(async (id) => {
+        try {
+          return await emergencyAmbulanceService.approve(id, approvalData);
+        } catch (error) {
+          console.error(`Failed to approve emergency request ${id}:`, error);
+          throw error;
+        }
+      });
+      
+      const results = await Promise.allSettled(promises);
+      
+      const failed = results.filter(result => result.status === 'rejected');
+      const succeeded = results.filter(result => result.status === 'fulfilled');
+      
+      if (failed.length > 0) {
+        console.warn(`${failed.length} emergency requests failed to approve`);
+        throw new Error(`Failed to approve ${failed.length} out of ${requestIds.length} emergency requests`);
       }
       
-      if (request.data.approval_status !== 'approved') {
-        throw new Error('Emergency request must be approved before dispatch');
+      return { 
+        success: true, 
+        message: `${succeeded.length} emergency requests approved successfully`,
+        results: succeeded.map(result => result.value.data)
+      };
+    } catch (error) {
+      console.error('Bulk approve error:', error);
+      throw new Error(`Bulk approve failed: ${error.message}`);
+    }
+  },
+
+  /**
+   * Bulk reject multiple emergency requests
+   * @param {Array} requestIds - Array of request IDs
+   * @param {Object} rejectionData - Common rejection data
+   * @returns {Promise} Bulk operation results
+   */
+  bulkReject: async (requestIds, rejectionData = {}) => {
+    try {
+      console.log('Bulk rejecting emergency requests:', requestIds);
+      
+      const promises = requestIds.map(async (id) => {
+        try {
+          return await emergencyAmbulanceService.reject(id, rejectionData);
+        } catch (error) {
+          console.error(`Failed to reject emergency request ${id}:`, error);
+          throw error;
+        }
+      });
+      
+      const results = await Promise.allSettled(promises);
+      
+      const failed = results.filter(result => result.status === 'rejected');
+      const succeeded = results.filter(result => result.status === 'fulfilled');
+      
+      if (failed.length > 0) {
+        console.warn(`${failed.length} emergency requests failed to reject`);
+        throw new Error(`Failed to reject ${failed.length} out of ${requestIds.length} emergency requests`);
       }
       
-      const updateData = {
-        status: 'D',
-        assigned_ambulance: ambulanceData.ambulanceId,
-        hospital_destination: ambulanceData.hospitalDestination,
-        dispatched_at: new Date().toISOString(),
-        dispatched_by: this.getCurrentUser()?.id,
-        dispatched_by_name: this.getCurrentUser()?.name || this.getCurrentUser()?.email,
-        ...ambulanceData
-      };
-      
-      const response = await this.updateEmergencyStatus(requestId, 'D', updateData);
-      
-      return {
-        ...response,
-        message: `Ambulance ${ambulanceData.ambulanceId} dispatched successfully`
+      return { 
+        success: true, 
+        message: `${succeeded.length} emergency requests rejected successfully`,
+        results: succeeded.map(result => result.value.data)
       };
     } catch (error) {
-      throw this.handleError(error, 'Failed to dispatch ambulance');
+      console.error('Bulk reject error:', error);
+      throw new Error(`Bulk reject failed: ${error.message}`);
     }
-  }
-  
+  },
+
   /**
-   * Mark ambulance as arrived
+   * Bulk dispatch multiple emergency requests
+   * @param {Array} requestIds - Array of request IDs
+   * @param {Object} dispatchData - Common dispatch data
+   * @returns {Promise} Bulk operation results
    */
-  async markArrived(requestId, additionalData = {}) {
+  bulkDispatch: async (requestIds, dispatchData = {}) => {
     try {
-      const response = await this.updateEmergencyStatus(requestId, 'A', {
-        arrived_at: new Date().toISOString(),
-        ...additionalData
+      console.log('Bulk dispatching emergency requests:', requestIds);
+      
+      const promises = requestIds.map(async (id) => {
+        try {
+          return await emergencyAmbulanceService.dispatch(id, dispatchData);
+        } catch (error) {
+          console.error(`Failed to dispatch emergency request ${id}:`, error);
+          throw error;
+        }
       });
       
-      return {
-        ...response,
-        message: 'Ambulance marked as arrived'
+      const results = await Promise.allSettled(promises);
+      
+      const failed = results.filter(result => result.status === 'rejected');
+      const succeeded = results.filter(result => result.status === 'fulfilled');
+      
+      if (failed.length > 0) {
+        console.warn(`${failed.length} emergency requests failed to dispatch`);
+        throw new Error(`Failed to dispatch ${failed.length} out of ${requestIds.length} emergency requests`);
+      }
+      
+      return { 
+        success: true, 
+        message: `${succeeded.length} emergency requests dispatched successfully`,
+        results: succeeded.map(result => result.value.data)
       };
     } catch (error) {
-      throw this.handleError(error, 'Failed to mark ambulance as arrived');
+      console.error('Bulk dispatch error:', error);
+      throw new Error(`Bulk dispatch failed: ${error.message}`);
     }
-  }
-  
+  },
+
   /**
-   * Mark as in transit to hospital
+   * Bulk update status for multiple emergency requests
+   * @param {Array} requestIds - Array of request IDs
+   * @param {string} status - New status
+   * @param {Object} additionalData - Additional status data
+   * @returns {Promise} Bulk operation results
    */
-  async markInTransit(requestId, additionalData = {}) {
+  bulkUpdateStatus: async (requestIds, status, additionalData = {}) => {
     try {
-      const response = await this.updateEmergencyStatus(requestId, 'T', {
-        in_transit_at: new Date().toISOString(),
-        ...additionalData
+      console.log(`Bulk updating emergency requests to ${status}:`, requestIds);
+      
+      const promises = requestIds.map(async (id) => {
+        try {
+          return await emergencyAmbulanceService.updateStatus(id, status, additionalData);
+        } catch (error) {
+          console.error(`Failed to update emergency request ${id} to ${status}:`, error);
+          throw error;
+        }
       });
       
-      return {
-        ...response,
-        message: 'Emergency marked as in transit'
+      const results = await Promise.allSettled(promises);
+      
+      const failed = results.filter(result => result.status === 'rejected');
+      const succeeded = results.filter(result => result.status === 'fulfilled');
+      
+      if (failed.length > 0) {
+        console.warn(`${failed.length} emergency requests failed to update`);
+        throw new Error(`Failed to update ${failed.length} out of ${requestIds.length} emergency requests`);
+      }
+      
+      return { 
+        success: true, 
+        message: `${succeeded.length} emergency requests updated successfully`,
+        results: succeeded.map(result => result.value.data)
       };
     } catch (error) {
-      throw this.handleError(error, 'Failed to mark as in transit');
+      console.error('Bulk update error:', error);
+      throw new Error(`Bulk update failed: ${error.message}`);
     }
-  }
-  
+  },
+
   /**
-   * Complete emergency request
+   * Bulk delete multiple emergency requests
+   * @param {Array} requestIds - Array of request IDs
+   * @returns {Promise} Bulk operation results
    */
-  async completeEmergency(requestId, additionalData = {}) {
+  bulkDelete: async (requestIds) => {
     try {
-      const response = await this.updateEmergencyStatus(requestId, 'C', {
-        completed_at: new Date().toISOString(),
-        completed_by: this.getCurrentUser()?.id,
-        completed_by_name: this.getCurrentUser()?.name || this.getCurrentUser()?.email,
-        ...additionalData
+      console.log('Bulk deleting emergency requests:', requestIds);
+      
+      const promises = requestIds.map(async (id) => {
+        try {
+          return await emergencyAmbulanceService.delete(id);
+        } catch (error) {
+          console.error(`Failed to delete emergency request ${id}:`, error);
+          throw error;
+        }
       });
       
-      return {
-        ...response,
-        message: 'Emergency request completed successfully'
+      const results = await Promise.allSettled(promises);
+      
+      const failed = results.filter(result => result.status === 'rejected');
+      const succeeded = results.filter(result => result.status === 'fulfilled');
+      
+      if (failed.length > 0) {
+        console.warn(`${failed.length} emergency requests failed to delete`);
+        throw new Error(`Failed to delete ${failed.length} out of ${requestIds.length} emergency requests`);
+      }
+      
+      return { 
+        success: true, 
+        message: `${succeeded.length} emergency requests deleted successfully`,
+        results: succeeded.map(result => result.value.data)
       };
     } catch (error) {
-      throw this.handleError(error, 'Failed to complete emergency request');
+      console.error('Bulk delete error:', error);
+      throw new Error(`Bulk delete failed: ${error.message}`);
     }
-  }
-  
-  // =========================== DISEASE SURVEILLANCE INTEGRATION ===========================
-  
+  },
+
+  // =============================================
+  // FILTERING AND SEARCH
+  // =============================================
+
+  /**
+   * Get emergency requests by status
+   * @param {string} status - Request status
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
+   */
+  getByStatus: async (status, additionalParams = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        status,
+        ...additionalParams
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get emergency requests by approval status
+   * @param {string} approvalStatus - Approval status (pending, approved, rejected)
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
+   */
+  getByApprovalStatus: async (approvalStatus, additionalParams = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        approval_status: approvalStatus,
+        ...additionalParams
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get emergency requests by priority
+   * @param {string} priority - Priority level (critical, urgent, normal)
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
+   */
+  getByPriority: async (priority, additionalParams = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        priority_override: priority,
+        ...additionalParams
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get emergency requests by clinic
+   * @param {number|string} clinicId - Clinic ID
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
+   */
+  getByClinic: async (clinicId, additionalParams = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        clinic: clinicId,
+        ...additionalParams
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get emergency requests by patient
+   * @param {number|string} patientId - Patient ID
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
+   */
+  getByPatient: async (patientId, additionalParams = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        patient: patientId,
+        ...additionalParams
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
   /**
    * Get emergency requests by suspected disease
+   * @param {string} disease - Disease name
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
    */
-  async getByDisease(disease) {
+  getBySuspectedDisease: async (disease, additionalParams = {}) => {
     try {
-      const response = await healthcareAPI.emergencies.getByDisease(disease);
-      
-      return {
-        success: true,
-        data: response.data,
-        disease: response.data.disease,
-        requests: response.data.requests || [],
-        totalRequests: response.data.total_requests || 0
-      };
+      const response = await emergencyAmbulanceService.list({
+        suspected_disease__icontains: disease,
+        ...additionalParams
+      });
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to fetch emergency requests by disease');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
   /**
-   * Get critical cases from symptom analysis
+   * Get emergency requests by date range
+   * @param {string} startDate - Start date (YYYY-MM-DD)
+   * @param {string} endDate - End date (YYYY-MM-DD)
+   * @param {Object} additionalParams - Additional query parameters
+   * @returns {Promise} API response with filtered requests
    */
-  async getCriticalCases() {
+  getByDateRange: async (startDate, endDate, additionalParams = {}) => {
     try {
-      const response = await healthcareAPI.emergencies.getCriticalCases();
-      
-      return {
-        success: true,
-        data: response.data,
-        criticalRequests: response.data.critical_requests || [],
-        totalCriticalSessions: response.data.total_critical_sessions || 0
-      };
+      const response = await emergencyAmbulanceService.list({
+        request_time__gte: startDate,
+        request_time__lte: endDate,
+        ...additionalParams
+      });
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to fetch critical cases');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
-  // =========================== GEOLOCATION SERVICES ===========================
-  
+  },
+
   /**
-   * Get user's current location
+   * Search emergency requests
+   * @param {string} query - Search query
+   * @param {Object} filters - Additional filters
+   * @returns {Promise} API response with search results
    */
-  async getCurrentLocation() {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by this browser'));
-        return;
-      }
-      
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            gps_coordinates: `${position.coords.latitude},${position.coords.longitude}`
-          });
-        },
-        (error) => {
-          reject(new Error(`Location error: ${error.message}`));
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 60000
-        }
-      );
-    });
-  }
-  
-  /**
-   * Find nearest hospitals based on location
-   */
-  async findNearestHospitals(latitude, longitude, radius = 10) {
+  search: async (query, filters = {}) => {
     try {
-      // This would typically integrate with a hospital database or maps API
-      // For now, we'll simulate with mock data
-      const mockHospitals = [
-        {
-          id: 1,
-          name: 'Central Hospital',
-          distance: 2.5,
-          address: '123 Main St, City Center',
-          phone: '+1-555-0101',
-          emergency_services: true
-        },
-        {
-          id: 2,
-          name: 'Regional Medical Center',
-          distance: 4.8,
-          address: '456 Health Ave, Medical District',
-          phone: '+1-555-0202',
-          emergency_services: true
-        },
-        {
-          id: 3,
-          name: 'Community Hospital',
-          distance: 7.2,
-          address: '789 Care Blvd, Suburb',
-          phone: '+1-555-0303',
-          emergency_services: true
-        }
-      ];
-      
-      return {
-        success: true,
-        hospitals: mockHospitals,
-        nearest: mockHospitals[0]
-      };
+      const response = await emergencyAmbulanceService.list({
+        search: query,
+        ...filters
+      });
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to find nearest hospitals');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
-  // =========================== REAL-TIME TRACKING ===========================
-  
-  /**
-   * Get real-time status of emergency request
-   */
-  async getRealtimeStatus(requestId) {
-    try {
-      const response = await this.getEmergencyRequest(requestId);
-      
-      return {
-        success: true,
-        status: response.data.status,
-        statusText: this.getStatusText(response.data.status),
-        approvalStatus: response.data.approval_status,
-        approvalStatusText: this.getApprovalStatusText(response.data.approval_status),
-        lastUpdated: response.data.updated_at || response.data.request_time,
-        estimatedArrival: this.calculateEstimatedArrival(response.data),
-        assignedAmbulance: response.data.assigned_ambulance,
-        hospitalDestination: response.data.hospital_destination,
-        approvedBy: response.data.approved_by_name,
-        approvedAt: response.data.approved_at
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to get real-time status');
-    }
-  }
-  
-  /**
-   * Calculate estimated arrival time
-   */
-  calculateEstimatedArrival(request) {
-    if (!request.assigned_ambulance || request.status === 'C') {
-      return null;
-    }
-    
-    const now = new Date();
-    let estimatedMinutes;
-    
-    switch (request.status) {
-      case 'P':
-        estimatedMinutes = 15; // Dispatch + travel time
-        break;
-      case 'D':
-        estimatedMinutes = 10; // Travel time
-        break;
-      case 'A':
-        estimatedMinutes = 5; // Loading time
-        break;
-      case 'T':
-        estimatedMinutes = 20; // Hospital travel time
-        break;
-      default:
-        return null;
-    }
-    
-    const estimatedTime = new Date(now.getTime() + estimatedMinutes * 60000);
-    return estimatedTime.toISOString();
-  }
-  
-  // =========================== STATISTICS AND ANALYTICS ===========================
-  
+  },
+
+  // =============================================
+  // ANALYTICS AND STATISTICS
+  // =============================================
+
   /**
    * Get emergency request statistics
+   * @param {Object} filters - Optional filters for statistics
+   * @returns {Promise} API response with statistics
    */
-  async getEmergencyStats(dateRange = 'week') {
+  getStatistics: async (filters = {}) => {
     try {
-      const params = { range: dateRange };
-      const response = await healthcareAPI.emergencies.list(params);
+      // Try the dedicated statistics endpoint first
+      const response = await api.get('/emergency-requests/statistics/', {
+        params: filters
+      });
+      return response;
+    } catch (error) {
+      // If statistics endpoint doesn't exist, calculate from list data
+      if (error.response?.status === 404) {
+        console.log('Statistics endpoint not found, calculating from list data...');
+        try {
+          const listResponse = await emergencyAmbulanceService.list(filters);
+          const requests = listResponse.data.results || listResponse.data;
+          
+          // Calculate statistics from the data
+          const stats = {
+            total: requests.length,
+            pending: requests.filter(r => r.approval_status === 'pending').length,
+            approved: requests.filter(r => r.approval_status === 'approved').length,
+            rejected: requests.filter(r => r.approval_status === 'rejected').length,
+            by_status: {
+              P: requests.filter(r => r.status === 'P').length,
+              D: requests.filter(r => r.status === 'D').length,
+              A: requests.filter(r => r.status === 'A').length,
+              T: requests.filter(r => r.status === 'T').length,
+              C: requests.filter(r => r.status === 'C').length,
+            },
+            critical_pending: requests.filter(r => 
+              r.approval_status === 'pending' && 
+              (r.priority_override === 'critical' || r.urgency_level === 'immediate')
+            ).length,
+            by_clinic: requests.reduce((acc, req) => {
+              if (req.clinic_name) {
+                const existing = acc.find(item => item.clinic__name === req.clinic_name);
+                if (existing) {
+                  existing.count++;
+                } else {
+                  acc.push({ clinic__name: req.clinic_name, count: 1 });
+                }
+              }
+              return acc;
+            }, []).sort((a, b) => b.count - a.count)
+          };
+          
+          return { data: stats };
+        } catch (listError) {
+          console.error('Error calculating statistics from list:', listError);
+          // Return empty statistics if both fail
+          return {
+            data: {
+              total: 0,
+              pending: 0,
+              approved: 0,
+              rejected: 0,
+              by_status: { P: 0, D: 0, A: 0, T: 0, C: 0 },
+              critical_pending: 0,
+              by_clinic: []
+            }
+          };
+        }
+      } else {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    }
+  },
+
+  /**
+   * Get pending critical cases
+   * @returns {Promise} API response with critical pending cases
+   */
+  getCriticalPendingCases: async () => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        approval_status: 'pending',
+        priority_override: 'critical'
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get urgent cases requiring immediate attention
+   * @returns {Promise} API response with urgent cases
+   */
+  getUrgentCases: async () => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        urgency_level__in: ['immediate', 'urgent'],
+        status__in: ['P', 'D']
+      });
+      return response;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  /**
+   * Get response time analytics
+   * @param {Object} filters - Date range and other filters
+   * @returns {Promise} Response time analytics data
+   */
+  getResponseTimeAnalytics: async (filters = {}) => {
+    try {
+      const response = await emergencyAmbulanceService.list({
+        ...filters,
+        include_response_times: true
+      });
       
+      // Calculate response times on frontend if backend doesn't provide them
       const requests = response.data.results || response.data;
+      const analytics = emergencyAmbulanceService.calculateResponseTimes(requests);
       
       return {
-        success: true,
-        stats: this.calculateStats(requests),
-        totalRequests: requests.length,
-        dateRange
+        ...response,
+        data: {
+          ...response.data,
+          analytics
+        }
       };
     } catch (error) {
-      throw this.handleError(error, 'Failed to get emergency statistics');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
+  // =============================================
+  // UTILITY FUNCTIONS
+  // =============================================
+
   /**
-   * Calculate statistics from requests data
+   * Calculate response times for emergency requests
+   * @param {Array} requests - Array of emergency request objects
+   * @returns {Object} Response time analytics
    */
-  calculateStats(requests) {
-    const stats = {
-      total: requests.length,
-      pending: 0,
-      dispatched: 0,
-      arrived: 0,
-      inTransit: 0,
-      completed: 0,
-      // Approval stats
-      pendingApproval: 0,
-      approved: 0,
-      rejected: 0,
-      byDisease: {},
-      averageResponseTime: 0,
-      criticalCases: 0,
-      averageApprovalTime: 0
+  calculateResponseTimes: (requests) => {
+    const analytics = {
+      total_requests: requests.length,
+      with_approval_time: 0,
+      with_dispatch_time: 0,
+      with_completion_time: 0,
+      average_approval_time: 0,
+      average_dispatch_time: 0,
+      average_completion_time: 0,
+      fastest_response: null,
+      slowest_response: null
     };
-    
-    let totalApprovalTime = 0;
-    let approvedCount = 0;
-    
+
+    const approvalTimes = [];
+    const dispatchTimes = [];
+    const completionTimes = [];
+
     requests.forEach(request => {
-      // Status counts
-      switch (request.status) {
-        case 'P': stats.pending++; break;
-        case 'D': stats.dispatched++; break;
-        case 'A': stats.arrived++; break;
-        case 'T': stats.inTransit++; break;
-        case 'C': stats.completed++; break;
-      }
-      
-      // Approval status counts
-      switch (request.approval_status) {
-        case 'pending': stats.pendingApproval++; break;
-        case 'approved': stats.approved++; break;
-        case 'rejected': stats.rejected++; break;
-      }
+      const requestTime = new Date(request.request_time);
       
       // Calculate approval time
-      if (request.approval_status === 'approved' && request.approved_at && request.request_time) {
-        const approvalTime = new Date(request.approved_at) - new Date(request.request_time);
-        totalApprovalTime += approvalTime;
-        approvedCount++;
+      if (request.approved_at) {
+        const approvalTime = new Date(request.approved_at) - requestTime;
+        approvalTimes.push(approvalTime);
+        analytics.with_approval_time++;
       }
       
-      // Disease tracking
-      if (request.suspected_disease) {
-        stats.byDisease[request.suspected_disease] = 
-          (stats.byDisease[request.suspected_disease] || 0) + 1;
+      // Calculate dispatch time
+      if (request.dispatched_at) {
+        const dispatchTime = new Date(request.dispatched_at) - requestTime;
+        dispatchTimes.push(dispatchTime);
+        analytics.with_dispatch_time++;
       }
       
-      // Critical cases (could be enhanced with severity scoring)
-      if (request.condition_description?.toLowerCase().includes('critical') ||
-          request.condition_description?.toLowerCase().includes('severe')) {
-        stats.criticalCases++;
+      // Calculate completion time
+      if (request.completed_at) {
+        const completionTime = new Date(request.completed_at) - requestTime;
+        completionTimes.push(completionTime);
+        analytics.with_completion_time++;
       }
     });
-    
-    // Calculate average approval time in minutes
-    if (approvedCount > 0) {
-      stats.averageApprovalTime = Math.round(totalApprovalTime / approvedCount / 60000);
+
+    // Calculate averages
+    if (approvalTimes.length > 0) {
+      analytics.average_approval_time = approvalTimes.reduce((a, b) => a + b, 0) / approvalTimes.length;
     }
     
-    return stats;
-  }
-  
-  // =========================== EMERGENCY WORKFLOWS ===========================
-  
+    if (dispatchTimes.length > 0) {
+      analytics.average_dispatch_time = dispatchTimes.reduce((a, b) => a + b, 0) / dispatchTimes.length;
+    }
+    
+    if (completionTimes.length > 0) {
+      analytics.average_completion_time = completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length;
+      analytics.fastest_response = Math.min(...completionTimes);
+      analytics.slowest_response = Math.max(...completionTimes);
+    }
+
+    return analytics;
+  },
+
   /**
-   * Quick emergency request from symptom checker
+   * Format emergency request for display
+   * @param {Object} request - Emergency request object
+   * @returns {Object} Formatted request data
    */
-  async createFromSymptomSession(sessionId, locationData) {
-    try {
-      // Get symptom session data
-      const sessionResponse = await healthcareAPI.symptomSessions.get(sessionId);
-      const session = sessionResponse.data;
-      
-      // Create emergency request with symptom data
-      const requestData = {
-        patient: session.patient_id,
-        location: locationData.address || 'Current location',
-        gps_coordinates: locationData.gps_coordinates,
-        condition_description: this.formatConditionFromSymptoms(session),
-        suspected_disease: session.primary_disease_name,
-        symptom_session_id: sessionId,
-        priority: this.determinePriorityFromSymptoms(session)
-      };
-      
-      return await this.createEmergencyRequest(requestData);
-    } catch (error) {
-      throw this.handleError(error, 'Failed to create emergency request from symptom session');
-    }
-  }
-  
-  /**
-   * Format condition description from symptom session
-   */
-  formatConditionFromSymptoms(session) {
-    let description = `Patient reports: ${session.symptoms?.join(', ') || 'symptoms reported'}`;
-    
-    if (session.severity_level) {
-      description += `\nSeverity: ${session.severity_level}`;
-    }
-    
-    if (session.primary_disease_name) {
-      description += `\nSuspected condition: ${session.primary_disease_name}`;
-    }
-    
-    if (session.recommendation) {
-      description += `\nRecommendation: ${session.recommendation}`;
-    }
-    
-    return description;
-  }
-  
-  /**
-   * Determine priority from symptom session
-   */
-  determinePriorityFromSymptoms(session) {
-    if (session.severity_level === 'high' || session.recommendation?.toLowerCase().includes('emergency')) {
-      return 'critical';
-    } else if (session.severity_level === 'medium') {
-      return 'urgent';
-    }
-    return 'normal';
-  }
-  
-  // =========================== UTILITY METHODS ===========================
-  
-  /**
-   * Validate emergency request data with enhanced patient checking
-   */
-  validateEmergencyRequest(data) {
-    const errors = [];
-    
-    if (!data.patient) errors.push('Patient is required');
-    if (!data.location) errors.push('Location is required');
-    if (!data.condition_description) errors.push('Condition description is required');
-    
-    // Validate GPS coordinates format if provided
-    if (data.gps_coordinates) {
-      const gpsRegex = /^-?\d+\.?\d*,-?\d+\.?\d*$/;
-      if (!gpsRegex.test(data.gps_coordinates)) {
-        errors.push('Invalid GPS coordinates format. Use "latitude,longitude"');
-      }
-    }
-    
+  formatRequestForDisplay: (request) => {
     return {
-      isValid: errors.length === 0,
-      errors
+      ...request,
+      formatted_request_time: new Date(request.request_time).toLocaleString(),
+      formatted_approved_at: request.approved_at ? new Date(request.approved_at).toLocaleString() : null,
+      formatted_dispatched_at: request.dispatched_at ? new Date(request.dispatched_at).toLocaleString() : null,
+      formatted_completed_at: request.completed_at ? new Date(request.completed_at).toLocaleString() : null,
+      status_display: emergencyAmbulanceService.getStatusDisplay(request.status),
+      approval_status_display: emergencyAmbulanceService.getApprovalStatusDisplay(request.approval_status),
+      priority_display: request.priority_override || 'Normal',
+      urgency_display: request.urgency_level || 'Standard'
     };
-  }
-  
+  },
+
   /**
-   * Get human-readable status text
+   * Get human-readable status display
+   * @param {string} status - Status code
+   * @returns {string} Human-readable status
    */
-  getStatusText(status) {
+  getStatusDisplay: (status) => {
     const statusMap = {
       'P': 'Pending',
       'D': 'Dispatched',
@@ -799,550 +780,166 @@ class EmergencyAmbulanceService {
       'T': 'In Transit',
       'C': 'Completed'
     };
-    return statusMap[status] || 'Unknown';
-  }
-  
+    return statusMap[status] || status;
+  },
+
   /**
-   * Get human-readable approval status text
+   * Get human-readable approval status display
+   * @param {string} approvalStatus - Approval status
+   * @returns {string} Human-readable approval status
    */
-  getApprovalStatusText(approvalStatus) {
+  getApprovalStatusDisplay: (approvalStatus) => {
     const statusMap = {
       'pending': 'Pending Approval',
       'approved': 'Approved',
       'rejected': 'Rejected'
     };
-    return statusMap[approvalStatus] || 'Unknown';
-  }
-  
+    return statusMap[approvalStatus] || approvalStatus;
+  },
+
+  /**
+   * Get priority color for UI
+   * @param {string} priority - Priority level
+   * @returns {string} CSS color class or hex color
+   */
+  getPriorityColor: (priority) => {
+    const colorMap = {
+      'critical': '#dc2626', // red-600
+      'urgent': '#ea580c',   // orange-600
+      'normal': '#16a34a'    // green-600
+    };
+    return colorMap[priority] || '#6b7280'; // gray-500
+  },
+
   /**
    * Get status color for UI
+   * @param {string} status - Status code
+   * @returns {string} CSS color class or hex color
    */
-  getStatusColor(status) {
+  getStatusColor: (status) => {
     const colorMap = {
-      'P': 'yellow',   // Pending
-      'D': 'blue',     // Dispatched
-      'A': 'green',    // Arrived
-      'T': 'orange',   // In Transit
-      'C': 'gray'      // Completed
+      'P': '#f59e0b', // yellow-500
+      'D': '#3b82f6', // blue-500
+      'A': '#8b5cf6', // violet-500
+      'T': '#06b6d4', // cyan-500
+      'C': '#10b981'  // emerald-500
     };
-    return colorMap[status] || 'gray';
-  }
-  
+    return colorMap[status] || '#6b7280'; // gray-500
+  },
+
   /**
-   * Get approval status color for UI
+   * Validate emergency request data
+   * @param {Object} requestData - Request data to validate
+   * @returns {Object} Validation result with isValid and errors
    */
-  getApprovalStatusColor(approvalStatus) {
-    const colorMap = {
-      'pending': 'yellow',   // Pending
-      'approved': 'green',   // Approved
-      'rejected': 'red'      // Rejected
-    };
-    return colorMap[approvalStatus] || 'gray';
-  }
-  
-  /**
-   * Format emergency request for display
-   */
-  formatEmergencyRequest(request) {
-    const requestTime = new Date(request.request_time);
+  validateRequestData: (requestData) => {
+    const errors = [];
+    
+    // Required fields validation
+    if (!requestData.location || requestData.location.trim() === '') {
+      errors.push('Location is required');
+    }
+    
+    if (!requestData.condition_description || requestData.condition_description.trim() === '') {
+      errors.push('Condition description is required');
+    }
+    
+    // GPS coordinates validation (if provided)
+    if (requestData.gps_coordinates) {
+      const gpsPattern = /^-?\d+\.?\d*,-?\d+\.?\d*$/;
+      if (!gpsPattern.test(requestData.gps_coordinates)) {
+        errors.push('GPS coordinates must be in "latitude,longitude" format');
+      }
+    }
+    
+    // Priority validation (if provided)
+    if (requestData.priority_override) {
+      const validPriorities = ['critical', 'urgent', 'normal'];
+      if (!validPriorities.includes(requestData.priority_override)) {
+        errors.push(`Priority must be one of: ${validPriorities.join(', ')}`);
+      }
+    }
+    
+    // Urgency validation (if provided)
+    if (requestData.urgency_level) {
+      const validUrgencyLevels = ['immediate', 'urgent', 'standard', 'non_urgent'];
+      if (!validUrgencyLevels.includes(requestData.urgency_level)) {
+        errors.push(`Urgency level must be one of: ${validUrgencyLevels.join(', ')}`);
+      }
+    }
     
     return {
-      id: request.id,
-      patient: request.patient_name || 'Unknown Patient',
-      location: request.location,
-      gpsCoordinates: request.gps_coordinates,
-      condition: request.condition_description,
-      status: request.status,
-      statusText: this.getStatusText(request.status),
-      statusColor: this.getStatusColor(request.status),
-      approvalStatus: request.approval_status || 'pending',
-      approvalStatusText: this.getApprovalStatusText(request.approval_status || 'pending'),
-      approvalStatusColor: this.getApprovalStatusColor(request.approval_status || 'pending'),
-      assignedAmbulance: request.assigned_ambulance,
-      hospitalDestination: request.hospital_destination,
-      suspectedDisease: request.suspected_disease,
-      diseaseInfo: request.suspected_disease_info,
-      requestTime: requestTime,
-      formattedTime: requestTime.toLocaleString(),
-      timeAgo: this.getTimeAgo(requestTime),
-      priority: this.calculatePriority(request),
-      approvedBy: request.approved_by_name,
-      approvedAt: request.approved_at,
-      approvalComments: request.approval_comments,
-      recommendedHospital: request.recommended_hospital,
-      urgencyLevel: request.urgency_level
+      isValid: errors.length === 0,
+      errors
     };
-  }
-  
+  },
+
   /**
-   * Calculate priority level
+   * Create emergency request from symptom session
+   * @param {number|string} sessionId - Symptom session ID
+   * @param {Object} additionalData - Additional emergency request data
+   * @returns {Promise} API response with created emergency request
    */
-  calculatePriority(request) {
-    // Use priority override if set during approval
-    if (request.priority_override) {
-      return request.priority_override;
-    }
-    
-    let priority = 'normal';
-    
-    // Check for critical keywords
-    const criticalKeywords = ['critical', 'severe', 'unconscious', 'cardiac', 'stroke'];
-    const description = request.condition_description?.toLowerCase() || '';
-    
-    if (criticalKeywords.some(keyword => description.includes(keyword))) {
-      priority = 'critical';
-    }
-    
-    // Check disease severity
-    if (request.suspected_disease_info?.emergency_threshold) {
-      if (request.suspected_disease_info.emergency_threshold === 'high') {
-        priority = 'critical';
-      } else if (request.suspected_disease_info.emergency_threshold === 'medium') {
-        priority = 'urgent';
-      }
-    }
-    
-    // Check elapsed time
-    const elapsed = Date.now() - new Date(request.request_time).getTime();
-    const minutesElapsed = elapsed / (1000 * 60);
-    
-    if (minutesElapsed > 30 && request.status === 'P') {
-      priority = priority === 'normal' ? 'urgent' : priority;
-    }
-    
-    return priority;
-  }
-  
-  /**
-   * Get time ago text
-   */
-  getTimeAgo(date) {
-    const now = new Date();
-    const diffInSeconds = Math.floor((now - date) / 1000);
-    
-    if (diffInSeconds < 60) {
-      return 'Just now';
-    } else if (diffInSeconds < 3600) {
-      const minutes = Math.floor(diffInSeconds / 60);
-      return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-    } else if (diffInSeconds < 86400) {
-      const hours = Math.floor(diffInSeconds / 3600);
-      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-    } else {
-      const days = Math.floor(diffInSeconds / 86400);
-      return `${days} day${days > 1 ? 's' : ''} ago`;
-    }
-  }
-  
-  /**
-   * Handle API errors consistently
-   */
-  handleError(error, defaultMessage) {
-    console.error('Emergency Service Error:', error);
-    
-    if (error.response?.data?.error) {
-      return new Error(error.response.data.error);
-    }
-    
-    if (error.response?.data) {
-      const data = error.response.data;
-      if (typeof data === 'object') {
-        const errors = Object.values(data).flat().join(', ');
-        return new Error(errors || defaultMessage);
-      }
-    }
-    
-    return new Error(error.message || defaultMessage);
-  }
-  
-  /**
-   * Get current user from localStorage
-   */
-  getCurrentUser() {
-    const user = localStorage.getItem('user');
-    return user ? JSON.parse(user) : null;
-  }
-  
-  /**
-   * Check if user has specific role
-   */
-  hasRole(requiredRole) {
-    const user = this.getCurrentUser();
-    return user?.role?.name === requiredRole;
-  }
-  
-  /**
-   * Check if user can manage emergency requests
-   */
-  canManageEmergencies() {
-    const user = this.getCurrentUser();
-    return ['Admin', 'Nurse', 'Doctor'].includes(user?.role?.name);
-  }
-  
-  /**
-   * Check if user can approve emergency requests
-   */
-  canApproveRequests() {
-    const user = this.getCurrentUser();
-    return ['Admin', 'Doctor', 'Nurse', 'Emergency_Coordinator'].includes(user?.role?.name);
-  }
-  
-  /**
-   * Check if user can create emergency requests
-   */
-  canCreateEmergencyRequests() {
-    const user = this.getCurrentUser();
-    return user && user.role; // Any logged-in user can create emergency requests
-  }
-  
-  /**
-   * Check if user can view emergency requests
-   */
-  canViewEmergencyRequests() {
-    const user = this.getCurrentUser();
-    return user && user.role; // Any logged-in user can view emergency requests
-  }
-  
-  /**
-   * Get approval workflow status
-   */
-  getApprovalWorkflowStatus(request) {
-    const status = {
-      canApprove: false,
-      canReject: false,
-      canDispatch: false,
-      canUpdate: false,
-      isApproved: false,
-      isRejected: false,
-      isPending: false
-    };
-    
-    if (!request || !this.canApproveRequests()) {
-      return status;
-    }
-    
-    switch (request.approval_status) {
-      case 'pending':
-        status.isPending = true;
-        status.canApprove = true;
-        status.canReject = true;
-        break;
-      case 'approved':
-        status.isApproved = true;
-        status.canDispatch = request.status === 'P'; // Can dispatch if still pending
-        status.canUpdate = true;
-        break;
-      case 'rejected':
-        status.isRejected = true;
-        // Rejected requests can be re-approved if user has permission
-        status.canApprove = true;
-        break;
-    }
-    
-    return status;
-  }
-  
-  /**
-   * Get emergency request metrics for dashboard
-   */
-  async getEmergencyMetrics(dateRange = 'week') {
+  createFromSymptomSession: async (sessionId, additionalData = {}) => {
     try {
-      const stats = await this.getEmergencyStats(dateRange);
+      // Get symptom session data
+      const sessionResponse = await api.get(`/symptom-sessions/${sessionId}/`);
+      const session = sessionResponse.data;
       
-      if (!stats.success) {
-        throw new Error('Failed to get emergency statistics');
-      }
-      
-      const metrics = {
-        totalRequests: stats.stats.total,
-        pendingApproval: stats.stats.pendingApproval,
-        approved: stats.stats.approved,
-        rejected: stats.stats.rejected,
-        dispatched: stats.stats.dispatched,
-        completed: stats.stats.completed,
-        criticalCases: stats.stats.criticalCases,
-        averageApprovalTime: stats.stats.averageApprovalTime,
-        approvalRate: stats.stats.total > 0 ? Math.round((stats.stats.approved / stats.stats.total) * 100) : 0,
-        rejectionRate: stats.stats.total > 0 ? Math.round((stats.stats.rejected / stats.stats.total) * 100) : 0,
-        completionRate: stats.stats.approved > 0 ? Math.round((stats.stats.completed / stats.stats.approved) * 100) : 0
+      // Prepare emergency request data
+      const requestData = {
+        condition_description: session.symptoms ? session.symptoms.join(', ') : 'Symptoms reported via symptom checker',
+        suspected_disease: session.primary_disease_name || '',
+        priority_override: session.severity_level === 'critical' ? 'critical' : 
+                          session.severity_level === 'severe' ? 'urgent' : 'normal',
+        urgency_level: session.severity_level === 'critical' ? 'immediate' : 
+                      session.severity_level === 'severe' ? 'urgent' : 'standard',
+        additional_notes: `Created from symptom session #${sessionId}. Risk score: ${session.overall_risk_score || 'N/A'}`,
+        ...additionalData
       };
       
-      return {
-        success: true,
-        metrics: metrics,
-        dateRange: dateRange
-      };
+      const response = await emergencyAmbulanceService.create(requestData);
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to get emergency metrics');
+      throw new Error(apiUtils.formatErrorMessage(error));
     }
-  }
-  
+  },
+
+  // =============================================
+  // EXPORT AND REPORTING
+  // =============================================
+
   /**
-   * Get emergency requests that need attention
+   * Export emergency requests data
+   * @param {string} format - Export format (csv, xlsx, pdf)
+   * @param {Object} filters - Filters to apply
+   * @returns {Promise} API response with export file
    */
-  async getRequestsNeedingAttention() {
+  export: async (format = 'csv', filters = {}) => {
     try {
-      const allRequests = await this.getEmergencyRequests({ ordering: '-request_time' });
-      
-      if (!allRequests.success) {
-        throw new Error('Failed to get emergency requests');
-      }
-      
-      const now = new Date();
-      const requests = allRequests.requests;
-      
-      const needingAttention = requests.filter(request => {
-        const requestTime = new Date(request.request_time);
-        const minutesElapsed = (now - requestTime) / (1000 * 60);
-        
-        // Requests needing attention:
-        // 1. Pending approval for more than 15 minutes
-        // 2. Approved but not dispatched for more than 30 minutes
-        // 3. Dispatched but not arrived for more than 45 minutes
-        // 4. Critical cases pending for more than 5 minutes
-        
-        const formatted = this.formatEmergencyRequest(request);
-        
-        if (formatted.priority === 'critical' && request.approval_status === 'pending' && minutesElapsed > 5) {
-          return true;
-        }
-        
-        if (request.approval_status === 'pending' && minutesElapsed > 15) {
-          return true;
-        }
-        
-        if (request.approval_status === 'approved' && request.status === 'P' && minutesElapsed > 30) {
-          return true;
-        }
-        
-        if (request.status === 'D' && minutesElapsed > 45) {
-          return true;
-        }
-        
-        return false;
+      const response = await api.get(`/emergency-ambulance-requests/export/`, {
+        params: { format, ...filters },
+        responseType: 'blob'
       });
-      
-      return {
-        success: true,
-        requests: needingAttention,
-        count: needingAttention.length
-      };
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to get requests needing attention');
+      throw new Error(`Export failed: ${error.message}`);
     }
-  }
-  
-  /**
-   * Send notification for emergency request
-   */
-  async sendEmergencyNotification(requestId, notificationType, recipients = []) {
-    try {
-      const request = await this.getEmergencyRequest(requestId);
-      
-      if (!request.success) {
-        throw new Error('Emergency request not found');
-      }
-      
-      const formatted = this.formatEmergencyRequest(request.data);
-      
-      const notificationData = {
-        type: notificationType,
-        request_id: requestId,
-        request_data: formatted,
-        recipients: recipients,
-        timestamp: new Date().toISOString(),
-        sender: this.getCurrentUser()?.name || 'System'
-      };
-      
-      // This would typically integrate with a notification service
-      // For now, we'll just log the notification
-      console.log('📢 Emergency Notification:', notificationData);
-      
-      return {
-        success: true,
-        message: 'Notification sent successfully',
-        notification: notificationData
-      };
-    } catch (error) {
-      throw this.handleError(error, 'Failed to send emergency notification');
-    }
-  }
-  
+  },
+
   /**
    * Generate emergency report
+   * @param {Object} reportParams - Report parameters
+   * @returns {Promise} API response with report data
    */
-  async generateEmergencyReport(dateRange = 'month', format = 'json') {
+  generateReport: async (reportParams = {}) => {
     try {
-      const stats = await this.getEmergencyStats(dateRange);
-      const metrics = await this.getEmergencyMetrics(dateRange);
-      
-      if (!stats.success || !metrics.success) {
-        throw new Error('Failed to generate report data');
-      }
-      
-      const report = {
-        generated_at: new Date().toISOString(),
-        generated_by: this.getCurrentUser()?.name || 'System',
-        date_range: dateRange,
-        summary: {
-          total_requests: stats.stats.total,
-          approval_metrics: {
-            pending: stats.stats.pendingApproval,
-            approved: stats.stats.approved,
-            rejected: stats.stats.rejected,
-            approval_rate: metrics.metrics.approvalRate,
-            rejection_rate: metrics.metrics.rejectionRate,
-            average_approval_time: metrics.metrics.averageApprovalTime
-          },
-          operational_metrics: {
-            dispatched: stats.stats.dispatched,
-            completed: stats.stats.completed,
-            completion_rate: metrics.metrics.completionRate,
-            critical_cases: stats.stats.criticalCases
-          },
-          disease_breakdown: stats.stats.byDisease
-        },
-        detailed_stats: stats.stats,
-        metrics: metrics.metrics
-      };
-      
-      return {
-        success: true,
-        report: report,
-        format: format
-      };
+      const response = await api.post('/emergency-ambulance-requests/generate-report/', reportParams);
+      return response;
     } catch (error) {
-      throw this.handleError(error, 'Failed to generate emergency report');
+      throw new Error(`Report generation failed: ${error.message}`);
     }
   }
-  
-  /**
-   * Validate approval permissions
-   */
-  validateApprovalPermissions(action) {
-    const user = this.getCurrentUser();
-    
-    if (!user) {
-      throw new Error('User must be logged in to perform this action');
-    }
-    
-    if (!this.canApproveRequests()) {
-      throw new Error(`You do not have permission to ${action} emergency requests`);
-    }
-    
-    return true;
-  }
-  
-  /**
-   * Get emergency request audit trail
-   */
-  async getEmergencyAuditTrail(requestId) {
-    try {
-      const response = await healthcareAPI.emergencies.getAuditTrail(requestId);
-      
-      return {
-        success: true,
-        auditTrail: response.data.audit_trail || [],
-        request: response.data.request
-      };
-    } catch (error) {
-      // If audit trail endpoint doesn't exist, create a simple trail from request data
-      try {
-        const request = await this.getEmergencyRequest(requestId);
-        if (request.success) {
-          const trail = this.createAuditTrailFromRequest(request.data);
-          return {
-            success: true,
-            auditTrail: trail,
-            request: request.data
-          };
-        }
-      } catch (fallbackError) {
-        throw this.handleError(fallbackError, 'Failed to get audit trail');
-      }
-      
-      throw this.handleError(error, 'Failed to get emergency audit trail');
-    }
-  }
-  
-  /**
-   * Create audit trail from request data
-   */
-  createAuditTrailFromRequest(request) {
-    const trail = [];
-    
-    // Request created
-    trail.push({
-      timestamp: request.request_time,
-      action: 'created',
-      user: request.created_by_name || 'System',
-      details: 'Emergency request created'
-    });
-    
-    // Approval events
-    if (request.approval_status === 'approved' && request.approved_at) {
-      trail.push({
-        timestamp: request.approved_at,
-        action: 'approved',
-        user: request.approved_by_name || 'System',
-        details: `Request approved. Comments: ${request.approval_comments || 'None'}`
-      });
-    }
-    
-    if (request.approval_status === 'rejected' && request.approved_at) {
-      trail.push({
-        timestamp: request.approved_at,
-        action: 'rejected',
-        user: request.approved_by_name || 'System',
-        details: `Request rejected. Comments: ${request.approval_comments || 'None'}`
-      });
-    }
-    
-    // Dispatch events
-    if (request.status === 'D' && request.dispatched_at) {
-      trail.push({
-        timestamp: request.dispatched_at,
-        action: 'dispatched',
-        user: request.dispatched_by_name || 'System',
-        details: `Ambulance ${request.assigned_ambulance} dispatched to ${request.hospital_destination}`
-      });
-    }
-    
-    // Arrival events
-    if (request.status === 'A' && request.arrived_at) {
-      trail.push({
-        timestamp: request.arrived_at,
-        action: 'arrived',
-        user: 'System',
-        details: 'Ambulance arrived at location'
-      });
-    }
-    
-    // In transit events
-    if (request.status === 'T' && request.in_transit_at) {
-      trail.push({
-        timestamp: request.in_transit_at,
-        action: 'in_transit',
-        user: 'System',
-        details: 'Patient in transit to hospital'
-      });
-    }
-    
-    // Completion events
-    if (request.status === 'C' && request.completed_at) {
-      trail.push({
-        timestamp: request.completed_at,
-        action: 'completed',
-        user: request.completed_by_name || 'System',
-        details: 'Emergency request completed'
-      });
-    }
-    
-    return trail.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  }
-}
-
-// Create and export singleton instance
-const emergencyAmbulanceService = new EmergencyAmbulanceService();
+};
 
 export default emergencyAmbulanceService;

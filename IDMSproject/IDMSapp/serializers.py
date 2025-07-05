@@ -827,44 +827,13 @@ class AppointmentSerializer(serializers.ModelSerializer):
 #         return super().to_representation(instance)    
 
 
+
 class DiseaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Disease
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
 
-class SymptomCheckerSessionSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    all_symptoms = serializers.SerializerMethodField()
-    warnings = serializers.SerializerMethodField()
-    disease_analyses = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SymptomCheckerSession
-        fields = '__all__'
-        read_only_fields = (
-            'session_id', 'created_at', 'updated_at',
-            'primary_suspected_disease', 'overall_risk_score',
-            'severity_level', 'recommendation', 'needs_followup',
-            'followup_date', 'analyzed_diseases', 'disease_analyses'
-        )
-
-    def get_all_symptoms(self, obj):
-        return obj.get_all_symptoms()
-
-    def get_warnings(self, obj):
-        return obj.validate_symptoms()
-
-    def get_disease_analyses(self, obj):
-        return DiseaseAnalysisSerializer(
-            obj.disease_analyses.all().order_by('-calculated_score'),
-            many=True
-        ).data
-
-    def create(self, validated_data):
-        instance = super().create(validated_data)
-        instance.analyze_symptoms()
-        return instance
 
 class DiseaseAnalysisSerializer(serializers.ModelSerializer):
     disease = DiseaseSerializer(read_only=True)
@@ -874,35 +843,122 @@ class DiseaseAnalysisSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('created_at',)
 
+
+# Simplified User serializer for nested use
+class SimpleUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'first_name', 'last_name']
+        read_only_fields = ['id', 'email', 'first_name', 'last_name']
+
+
+class SymptomCheckerSessionSerializer(serializers.ModelSerializer):
+    # Use simplified user serializer to avoid field conflicts
+    user = SimpleUserSerializer(read_only=True)
+    primary_suspected_disease = DiseaseSerializer(read_only=True)
+    all_symptoms = serializers.SerializerMethodField()
+    warnings = serializers.SerializerMethodField()
+    disease_analyses = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SymptomCheckerSession
+        fields = [
+            'id', 'session_id', 'user', 'selected_symptoms', 'custom_symptoms',
+            'location', 'age_range', 'gender', 'temperature', 'heart_rate',
+            'primary_suspected_disease', 'overall_risk_score', 'severity_level',
+            'recommendation', 'needs_followup', 'followup_date', 'analyzed_diseases',
+            'all_symptoms', 'warnings', 'disease_analyses', 'created_at', 'updated_at'
+        ]
+        read_only_fields = (
+            'id', 'session_id', 'user', 'created_at', 'updated_at',
+            'primary_suspected_disease', 'overall_risk_score',
+            'severity_level', 'recommendation', 'needs_followup',
+            'followup_date', 'analyzed_diseases', 'all_symptoms', 'warnings', 'disease_analyses'
+        )
+
+    def get_all_symptoms(self, obj):
+        try:
+            return obj.get_all_symptoms()
+        except AttributeError:
+            # Fallback if method doesn't exist
+            return list(obj.selected_symptoms) + list(obj.custom_symptoms)
+
+    def get_warnings(self, obj):
+        try:
+            return obj.validate_symptoms()
+        except AttributeError:
+            # Fallback if method doesn't exist
+            return []
+
+    def get_disease_analyses(self, obj):
+        try:
+            return DiseaseAnalysisSerializer(
+                obj.disease_analyses.all().order_by('-calculated_score'),
+                many=True
+            ).data
+        except AttributeError:
+            # Fallback if relationship doesn't exist
+            return []
+
+    def create(self, validated_data):
+        # Create the instance
+        instance = super().create(validated_data)
+        
+        # Analyze symptoms after creation
+        try:
+            if hasattr(instance, 'analyze_symptoms'):
+                instance.analyze_symptoms()
+        except Exception as e:
+            # Log the error but don't fail the creation
+            print(f"Error during symptom analysis: {e}")
+        
+        return instance
+
+    def validate(self, data):
+        """Validate the incoming data"""
+        # Ensure at least one symptom is provided
+        selected_symptoms = data.get('selected_symptoms', [])
+        custom_symptoms = data.get('custom_symptoms', [])
+        
+        if not selected_symptoms and not custom_symptoms:
+            raise serializers.ValidationError(
+                "At least one symptom must be provided (selected or custom)"
+            )
+        
+        return data
+
+
 class MedicalTestSerializer(serializers.ModelSerializer):
     class Meta:
         model = MedicalTest
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+
 
 class PatientTestResultSerializer(serializers.ModelSerializer):
     test = MedicalTestSerializer(read_only=True)
-    performed_by = UserSerializer(read_only=True)
+    performed_by = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
     
     class Meta:
         model = PatientTestResult
         fields = '__all__'
         read_only_fields = ('performed_at',)
 
+
 class TreatmentPlanSerializer(serializers.ModelSerializer):
-    supervising_doctor = UserSerializer(read_only=True)
-    created_by = UserSerializer(read_only=True)
+    supervising_doctor = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
+    created_by = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
     
     class Meta:
         model = TreatmentPlan
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
 
+
 class PatientDiagnosisSerializer(serializers.ModelSerializer):
-    patient = UserSerializer(read_only=True)
+    patient = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
     disease = DiseaseSerializer(read_only=True)
-    treating_doctor = UserSerializer(read_only=True)
-    confirmed_by = UserSerializer(read_only=True)
+    treating_doctor = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
+    confirmed_by = SimpleUserSerializer(read_only=True)  # Use simplified user serializer
     session = SymptomCheckerSessionSerializer(read_only=True)
     test_results = serializers.SerializerMethodField()
     treatment_plan = serializers.SerializerMethodField()
@@ -912,30 +968,51 @@ class PatientDiagnosisSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = (
             'created_at', 'updated_at', 'confirmed_at',
-            'confirmed_by', 'treatment_plan'
+            'confirmed_by'
         )
 
     def get_test_results(self, obj):
-        return PatientTestResultSerializer(
-            obj.test_results.all().order_by('-performed_at'),
-            many=True
-        ).data
+        try:
+            return PatientTestResultSerializer(
+                obj.test_result_records.all().order_by('-performed_at'),
+                many=True
+            ).data
+        except AttributeError:
+            return []
 
     def get_treatment_plan(self, obj):
-        if hasattr(obj, 'treatment_plan'):
-            return TreatmentPlanSerializer(obj.treatment_plan).data
+        try:
+            if hasattr(obj, 'treatment_plan'):
+                return TreatmentPlanSerializer(obj.treatment_plan).data
+        except AttributeError:
+            pass
         return None
+
 
 class DoctorAssignmentSerializer(serializers.Serializer):
     doctor_id = serializers.PrimaryKeyRelatedField(
-        queryset=get_user_model().objects.filter(groups__name='Doctors')
+        queryset=User.objects.filter(groups__name='Doctors')
     )
+
 
 class DiagnosisConfirmationSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
     test_results = serializers.JSONField(required=False)
 
+
 class MedicationSerializer(serializers.Serializer):
-    name = serializers.CharField()
-    dosage = serializers.CharField()
-    frequency = serializers.CharField()
+    name = serializers.CharField(max_length=200)
+    dosage = serializers.CharField(max_length=100)
+    frequency = serializers.CharField(max_length=100)
+
+
+# Alternative: Ultra-minimal serializer for testing
+class MinimalSymptomCheckerSessionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SymptomCheckerSession
+        fields = [
+            'id', 'selected_symptoms', 'custom_symptoms',
+            'location', 'age_range', 'gender', 'temperature', 'heart_rate',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']

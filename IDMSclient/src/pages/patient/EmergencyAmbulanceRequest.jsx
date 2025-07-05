@@ -1,1284 +1,782 @@
-// src/pages/emergency/EmergencyManagement.jsx - UPDATED WITH CLINIC SUPPORT
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import emergencyAmbulanceService from '../../services/emergencyAmbulanceService';
-import { authAPI, healthcareAPI } from '../../services/api';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import {
-  Ambulance,
-  MapPin,
-  Clock,
-  Phone,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Activity,
-  Navigation,
-  Hospital,
-  User,
-  Calendar,
-  Search,
-  Filter,
-  RefreshCw,
-  Loader2,
-  Eye,
-  Edit3,
-  Truck,
-  Target,
-  Route,
-  Flag,
-  Info,
-  Bell,
-  Zap,
-  Heart,
-  X,
-  Plus,
-  Send,
-  Map,
-  Crosshair,
-  Building
-} from 'lucide-react';
+import { emergencyAmbulanceService } from '../../services/emergencyAmbulanceService';
+import { healthcareAPI, authAPI } from '../../services/api';
+import api from '../../services/api';
+import { Plus, Clock, MapPin, AlertTriangle, Phone, CheckCircle, Navigation, Eye, X } from 'lucide-react';
 
-const EmergencyManagement = () => {
-  // =========================== STATE MANAGEMENT ===========================
-  
-  // Data states
+const PatientEmergencyPage = () => {
   const [emergencyRequests, setEmergencyRequests] = useState([]);
   const [clinics, setClinics] = useState([]);
-  const [nearestHospitals, setNearestHospitals] = useState([]);
-  const [stats, setStats] = useState({});
-  const [lastRefresh, setLastRefresh] = useState(new Date());
-  
-  // Loading states
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState({});
-  
-  // Message states
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  
-  // Modal states
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState(null);
-  
-  // Form states
-  const [createForm, setCreateForm] = useState({
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [formData, setFormData] = useState({
+    clinic: '',
     location: '',
     gps_coordinates: '',
     condition_description: '',
     suspected_disease: '',
-    clinic: ''
+    urgency_level: 'standard',
+    additional_notes: ''
   });
-  
-  const [dispatchForm, setDispatchForm] = useState({
-    ambulanceId: '',
-    hospitalDestination: '',
-    estimatedArrival: ''
-  });
-  
-  // Filter states
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [diseaseFilter, setDiseaseFilter] = useState('all');
-  const [clinicFilter, setClinicFilter] = useState('all');
-  
-  // User context
-  const currentUser = authAPI.getCurrentUser();
-  const canManage = emergencyAmbulanceService.canManageEmergencies();
+  const [creating, setCreating] = useState(false);
 
-  // =========================== COMPUTED VALUES ===========================
-  
-  const filteredRequests = useMemo(() => {
-    return emergencyRequests.filter(request => {
-      const formatted = emergencyAmbulanceService.formatEmergencyRequest(request);
-      
-      // Search filter
-      if (searchTerm) {
-        const searchLower = searchTerm.toLowerCase();
-        const matchesSearch = 
-          formatted.patient.toLowerCase().includes(searchLower) ||
-          formatted.location.toLowerCase().includes(searchLower) ||
-          formatted.condition.toLowerCase().includes(searchLower) ||
-          formatted.suspectedDisease?.toLowerCase().includes(searchLower) ||
-          formatted.assignedAmbulance?.toLowerCase().includes(searchLower) ||
-          request.clinic_name?.toLowerCase().includes(searchLower);
-        
-        if (!matchesSearch) return false;
-      }
-      
-      // Status filter
-      if (statusFilter !== 'all' && request.status !== statusFilter) {
-        return false;
-      }
-      
-      // Priority filter
-      if (priorityFilter !== 'all' && formatted.priority !== priorityFilter) {
-        return false;
-      }
-      
-      // Disease filter
-      if (diseaseFilter !== 'all' && request.suspected_disease !== diseaseFilter) {
-        return false;
-      }
-      
-      // Clinic filter
-      if (clinicFilter !== 'all' && request.clinic !== parseInt(clinicFilter)) {
-        return false;
-      }
-      
-      return true;
-    });
-  }, [emergencyRequests, searchTerm, statusFilter, priorityFilter, diseaseFilter, clinicFilter]);
-
-  const dashboardStats = useMemo(() => {
-    const formatted = emergencyRequests.map(req => 
-      emergencyAmbulanceService.formatEmergencyRequest(req)
-    );
-    
-    return {
-      total: formatted.length,
-      pending: formatted.filter(req => req.status === 'P').length,
-      dispatched: formatted.filter(req => req.status === 'D').length,
-      arrived: formatted.filter(req => req.status === 'A').length,
-      inTransit: formatted.filter(req => req.status === 'T').length,
-      completed: formatted.filter(req => req.status === 'C').length,
-      critical: formatted.filter(req => req.priority === 'critical').length,
-      urgent: formatted.filter(req => req.priority === 'urgent').length
-    };
-  }, [emergencyRequests]);
-
-  // =========================== DATA FETCHING ===========================
-  
-  const fetchClinics = useCallback(async () => {
-    try {
-      const response = await healthcareAPI.clinics.list();
-      if (response.data) {
-        const clinicData = response.data.results || response.data;
-        setClinics(clinicData);
-      }
-    } catch (err) {
-      console.error('Error fetching clinics:', err);
-    }
-  }, []);
-  
-  const fetchEmergencyRequests = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError('');
-      
-      const response = await emergencyAmbulanceService.getEmergencyRequests({
-        ordering: '-request_time'
-      });
-      
-      if (response.success) {
-        setEmergencyRequests(response.requests);
-        setLastRefresh(new Date());
-      } else {
-        setError('Failed to fetch emergency requests');
-      }
-    } catch (err) {
-      console.error('Error fetching emergency requests:', err);
-      setError('Failed to fetch emergency requests');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const fetchStats = useCallback(async () => {
-    try {
-      const response = await emergencyAmbulanceService.getEmergencyStats();
-      if (response.success) {
-        setStats(response.stats);
-      }
-    } catch (err) {
-      console.error('Error fetching emergency stats:', err);
-    }
-  }, []);
-
-  const fetchNearestHospitals = useCallback(async () => {
-    try {
-      const location = await emergencyAmbulanceService.getCurrentLocation();
-      const hospitals = await emergencyAmbulanceService.findNearestHospitals(
-        location.latitude,
-        location.longitude
-      );
-      if (hospitals.success) {
-        setNearestHospitals(hospitals.hospitals);
-      }
-    } catch (err) {
-      console.error('Error fetching nearest hospitals:', err);
-    }
-  }, []);
-
-  // =========================== FORM HANDLERS ===========================
-  
-  const handleCreateRequest = async () => {
-    try {
-      setActionLoading(prev => ({ ...prev, create: true }));
-      
-      // Get current location if not provided
-      let requestData = { ...createForm };
-      if (!requestData.gps_coordinates) {
-        try {
-          const location = await emergencyAmbulanceService.getCurrentLocation();
-          requestData.gps_coordinates = location.gps_coordinates;
-          if (!requestData.location) {
-            requestData.location = 'Current location';
-          }
-        } catch (locationError) {
-          console.warn('Could not get location:', locationError);
-        }
-      }
-      
-      // Add clinic ID if selected
-      if (requestData.clinic) {
-        requestData.clinic = parseInt(requestData.clinic);
-      }
-      
-      const response = await emergencyAmbulanceService.createEmergencyRequest(requestData);
-      
-      if (response.success) {
-        setSuccess('Emergency request created successfully');
-        setShowCreateModal(false);
-        resetCreateForm();
-        fetchEmergencyRequests();
-      } else {
-        setError('Failed to create emergency request');
-      }
-    } catch (err) {
-      console.error('Error creating emergency request:', err);
-      setError(err.message || 'Failed to create emergency request');
-    } finally {
-      setActionLoading(prev => ({ ...prev, create: false }));
-    }
-  };
-
-  const handleDispatchAmbulance = async () => {
-    if (!selectedRequest) return;
-    
-    try {
-      setActionLoading(prev => ({ ...prev, dispatch: true }));
-      
-      const response = await emergencyAmbulanceService.dispatchAmbulance(
-        selectedRequest.id,
-        dispatchForm
-      );
-      
-      if (response.success) {
-        setSuccess('Ambulance dispatched successfully');
-        setShowDispatchModal(false);
-        resetDispatchForm();
-        fetchEmergencyRequests();
-      } else {
-        setError('Failed to dispatch ambulance');
-      }
-    } catch (err) {
-      console.error('Error dispatching ambulance:', err);
-      setError(err.message || 'Failed to dispatch ambulance');
-    } finally {
-      setActionLoading(prev => ({ ...prev, dispatch: false }));
-    }
-  };
-
-  const handleStatusUpdate = async (requestId, newStatus) => {
-    try {
-      setActionLoading(prev => ({ ...prev, [requestId]: true }));
-      
-      const response = await emergencyAmbulanceService.updateEmergencyStatus(requestId, newStatus);
-      
-      if (response.success) {
-        setSuccess(response.message);
-        fetchEmergencyRequests();
-      } else {
-        setError('Failed to update status');
-      }
-    } catch (err) {
-      console.error('Error updating status:', err);
-      setError(err.message || 'Failed to update status');
-    } finally {
-      setActionLoading(prev => ({ ...prev, [requestId]: false }));
-    }
-  };
-
-  const handleGetCurrentLocation = async () => {
-    try {
-      setActionLoading(prev => ({ ...prev, location: true }));
-      
-      const location = await emergencyAmbulanceService.getCurrentLocation();
-      
-      setCreateForm(prev => ({
-        ...prev,
-        gps_coordinates: location.gps_coordinates,
-        location: prev.location || 'Current location'
-      }));
-      
-      setSuccess('Location obtained successfully');
-    } catch (err) {
-      console.error('Error getting location:', err);
-      setError(err.message || 'Failed to get current location');
-    } finally {
-      setActionLoading(prev => ({ ...prev, location: false }));
-    }
-  };
-
-  // =========================== UTILITY FUNCTIONS ===========================
-  
-  const resetCreateForm = () => {
-    setCreateForm({
-      location: '',
-      gps_coordinates: '',
-      condition_description: '',
-      suspected_disease: '',
-      clinic: ''
-    });
-  };
-
-  const resetDispatchForm = () => {
-    setDispatchForm({
-      ambulanceId: '',
-      hospitalDestination: '',
-      estimatedArrival: ''
-    });
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'P': return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'D': return <Truck className="h-4 w-4 text-blue-500" />;
-      case 'A': return <Target className="h-4 w-4 text-green-500" />;
-      case 'T': return <Route className="h-4 w-4 text-orange-500" />;
-      case 'C': return <CheckCircle className="h-4 w-4 text-gray-500" />;
-      default: return <AlertTriangle className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getPriorityIcon = (priority) => {
-    switch (priority) {
-      case 'critical': return <Zap className="h-4 w-4 text-red-500" />;
-      case 'urgent': return <AlertTriangle className="h-4 w-4 text-orange-500" />;
-      case 'normal': return <Info className="h-4 w-4 text-blue-500" />;
-      default: return <Info className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getPriorityColor = (priority) => {
-    switch (priority) {
-      case 'critical': return 'bg-red-100 text-red-800 border-red-300';
-      case 'urgent': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'normal': return 'bg-blue-100 text-blue-800 border-blue-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'P': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'D': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'A': return 'bg-green-100 text-green-800 border-green-300';
-      case 'T': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'C': return 'bg-gray-100 text-gray-800 border-gray-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  // =========================== EFFECTS ===========================
-  
   useEffect(() => {
     fetchEmergencyRequests();
     fetchClinics();
-    fetchStats();
-    fetchNearestHospitals();
-    
-    // Auto-refresh every 30 seconds for real-time updates
-    const interval = setInterval(fetchEmergencyRequests, 30000);
-    return () => clearInterval(interval);
-  }, [fetchEmergencyRequests, fetchClinics, fetchStats, fetchNearestHospitals]);
+  }, []);
 
-  // Auto-clear messages
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 5000);
-      return () => clearTimeout(timer);
+  const fetchClinics = async () => {
+    try {
+      const response = await healthcareAPI.clinics.list();
+      setClinics(response.data.results || response.data);
+    } catch (error) {
+      console.error('Error fetching clinics:', error);
     }
-  }, [success]);
+  };
 
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(''), 8000);
-      return () => clearTimeout(timer);
+  const getCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by this browser');
+      return;
     }
-  }, [error]);
 
-  // =========================== RENDER COMPONENTS ===========================
-  
-  const AlertMessage = ({ type, message, onClose }) => (
-    <div className={`${type === 'error' ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'} border rounded-lg p-4 mb-6`}>
-      <div className="flex items-start gap-3">
-        {type === 'error' ? (
-          <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-        ) : (
-          <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-        )}
-        <div className="flex-1">
-          <h3 className={`text-sm font-medium ${type === 'error' ? 'text-red-800' : 'text-green-800'} mb-1`}>
-            {type === 'error' ? 'Error' : 'Success'}
-          </h3>
-          <p className={`${type === 'error' ? 'text-red-700' : 'text-green-700'} text-sm`}>
-            {message}
-          </p>
-        </div>
-        <button
-          onClick={onClose}
-          className={`${type === 'error' ? 'text-red-500 hover:text-red-700' : 'text-green-500 hover:text-green-700'} p-1`}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
-
-  const StatCard = ({ icon: Icon, title, value, color, onClick }) => (
-    <div 
-      className={`bg-white rounded-lg shadow-sm p-4 ${onClick ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
-      onClick={onClick}
-    >
-      <div className="flex items-center gap-3">
-        <div className={`bg-${color}-100 p-2 rounded-lg`}>
-          <Icon className={`h-5 w-5 text-${color}-600`} />
-        </div>
-        <div>
-          <p className="text-sm text-gray-600">{title}</p>
-          <p className="text-xl font-semibold text-gray-900">{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-
-  const FilterControls = () => (
-    <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-      <div className="flex flex-col lg:flex-row gap-4">
-        <div className="flex-1">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search by patient, location, condition, clinic, or ambulance..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-        
-        <div className="flex flex-col sm:flex-row gap-4">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Status</option>
-            <option value="P">Pending</option>
-            <option value="D">Dispatched</option>
-            <option value="A">Arrived</option>
-            <option value="T">In Transit</option>
-            <option value="C">Completed</option>
-          </select>
-          
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Priority</option>
-            <option value="critical">Critical</option>
-            <option value="urgent">Urgent</option>
-            <option value="normal">Normal</option>
-          </select>
-          
-          <select
-            value={clinicFilter}
-            onChange={(e) => setClinicFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="all">All Clinics</option>
-            {clinics.map(clinic => (
-              <option key={clinic.id} value={clinic.id}>
-                {clinic.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-    </div>
-  );
-
-  const EmergencyRequestCard = ({ request }) => {
-    const formatted = emergencyAmbulanceService.formatEmergencyRequest(request);
-    const isLoading = actionLoading[request.id];
-    
-    return (
-      <div className="p-6 hover:bg-gray-50 transition-colors">
-        <div className="flex items-start gap-4">
-          {/* Priority Indicator */}
-          <div className="flex-shrink-0 mt-1">
-            {getPriorityIcon(formatted.priority)}
-          </div>
-
-          {/* Main Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                {/* Status and Priority */}
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    {getStatusIcon(request.status)}
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}>
-                      {formatted.statusText}
-                    </span>
-                  </div>
-                  
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getPriorityColor(formatted.priority)}`}>
-                    {formatted.priority.toUpperCase()}
-                  </span>
-                </div>
-
-                {/* Patient and Time */}
-                <div className="flex items-center gap-4 mb-3">
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <User className="h-4 w-4" />
-                    <span className="font-medium">{formatted.patient}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <Clock className="h-4 w-4" />
-                    <span className="font-medium">{formatted.timeAgo}</span>
-                  </div>
-                </div>
-
-                {/* Location */}
-                <div className="flex items-center gap-2 mb-3">
-                  <MapPin className="h-4 w-4 text-gray-400" />
-                  <span className="text-gray-700">{formatted.location}</span>
-                  {formatted.gpsCoordinates && (
-                    <a
-                      href={`https://maps.google.com/?q=${formatted.gpsCoordinates}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-800 text-sm"
-                    >
-                      View on Map
-                    </a>
-                  )}
-                </div>
-
-                {/* Condition */}
-                <div className="flex items-start gap-2 mb-3">
-                  <Heart className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-gray-700">{formatted.condition}</span>
-                </div>
-
-                {/* Clinic Information */}
-                {request.clinic_name && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <Building className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Clinic:</strong> {request.clinic_name}
-                    </span>
-                  </div>
-                )}
-
-                {/* Suspected Disease */}
-                {formatted.suspectedDisease && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <Activity className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Suspected:</strong> {formatted.suspectedDisease}
-                    </span>
-                    {formatted.diseaseInfo?.is_contagious && (
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-300">
-                        Contagious
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Ambulance and Hospital */}
-                {formatted.assignedAmbulance && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <Truck className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Ambulance:</strong> {formatted.assignedAmbulance}
-                    </span>
-                  </div>
-                )}
-
-                {formatted.hospitalDestination && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <Hospital className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-700">
-                      <strong>Hospital:</strong> {formatted.hospitalDestination}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 ml-4">
-                <button
-                  onClick={() => {
-                    setSelectedRequest(request);
-                    setShowDetailsModal(true);
-                  }}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  title="View Details"
-                >
-                  <Eye className="h-4 w-4" />
-                </button>
-
-                {canManage && (
-                  <>
-                    {request.status === 'P' && (
-                      <button
-                        onClick={() => {
-                          setSelectedRequest(request);
-                          setShowDispatchModal(true);
-                        }}
-                        disabled={isLoading}
-                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Dispatch Ambulance"
-                      >
-                        {isLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                      </button>
-                    )}
-
-                    {request.status === 'D' && (
-                      <button
-                        onClick={() => handleStatusUpdate(request.id, 'A')}
-                        disabled={isLoading}
-                        className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Mark as Arrived"
-                      >
-                        {isLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Target className="h-4 w-4" />
-                        )}
-                      </button>
-                    )}
-
-                    {request.status === 'A' && (
-                      <button
-                        onClick={() => handleStatusUpdate(request.id, 'T')}
-                        disabled={isLoading}
-                        className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Mark as In Transit"
-                      >
-                        {isLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Route className="h-4 w-4" />
-                        )}
-                      </button>
-                    )}
-
-                    {request.status === 'T' && (
-                      <button
-                        onClick={() => handleStatusUpdate(request.id, 'C')}
-                        disabled={isLoading}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Mark as Completed"
-                      >
-                        {isLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <CheckCircle className="h-4 w-4" />
-                        )}
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+    setGettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setFormData(prev => ({
+          ...prev,
+          gps_coordinates: `${latitude},${longitude}`
+        }));
+        setGettingLocation(false);
+        alert('Location captured successfully!');
+      },
+      (error) => {
+        setGettingLocation(false);
+        let errorMessage = 'Unable to get location';
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location access denied by user';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information unavailable';
+            break;
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out';
+            break;
+        }
+        alert(errorMessage);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
     );
   };
 
-  // =========================== MAIN RENDER ===========================
-  
-  return (
-    <DashboardLayout>
-      <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-        <div className="max-w-7xl mx-auto">
+  const fetchEmergencyRequests = async () => {
+    try {
+      const response = await emergencyAmbulanceService.list();
+      setEmergencyRequests(response.data.results || response.data);
+    } catch (error) {
+      console.error('Error fetching emergency requests:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.location.trim() || !formData.condition_description.trim()) {
+      alert('Please fill in all required fields');
+      return;
+    }
+    
+    setCreating(true);
+    
+    try {
+      console.log('=== EMERGENCY REQUEST SUBMISSION DEBUG ===');
+      console.log('Form data:', JSON.stringify(formData, null, 2));
+      
+      // Get current user and patient info
+      const currentUser = authAPI.getCurrentUser();
+      console.log('Current user:', JSON.stringify(currentUser, null, 2));
+      
+      // Try to get patient ID first
+      let patientId = null;
+      
+      // Method 1: Check if user object has patient info
+      if (currentUser?.patient_id) {
+        patientId = currentUser.patient_id;
+        console.log('Patient ID from user.patient_id:', patientId);
+      } else if (currentUser?.patient?.id) {
+        patientId = currentUser.patient.id;
+        console.log('Patient ID from user.patient.id:', patientId);
+      } else if (currentUser?.role?.name === 'Patient') {
+        // Method 2: Try to fetch from patients API
+        try {
+          console.log('Fetching patient data from API...');
+          const patientResponse = await healthcareAPI.patients.list({ user: currentUser.id });
+          console.log('Patient API response:', JSON.stringify(patientResponse.data, null, 2));
           
-          {/* Header */}
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                  <Ambulance className="h-8 w-8 text-red-600" />
-                  Emergency Management
-                </h1>
-                <p className="text-gray-600">
-                  Monitor and manage emergency ambulance requests • Last updated: {lastRefresh.toLocaleTimeString()}
-                </p>
-              </div>
-              <div className="mt-4 lg:mt-0 flex gap-3">
+          const patientData = patientResponse.data.results?.[0] || patientResponse.data[0];
+          if (patientData?.id) {
+            patientId = patientData.id;
+            console.log('Patient ID from API:', patientId);
+          } else {
+            // Method 3: Use user ID as fallback
+            patientId = currentUser.id;
+            console.log('Using user ID as patient ID:', patientId);
+          }
+        } catch (apiError) {
+          console.error('Patient API error:', apiError);
+          // Use user ID as final fallback
+          patientId = currentUser.id;
+          console.log('Fallback: using user ID as patient ID:', patientId);
+        }
+      }
+      
+      // Prepare request data
+      const requestData = {
+        patient: patientId,
+        location: formData.location.trim(),
+        condition_description: formData.condition_description.trim(),
+        suspected_disease: formData.suspected_disease?.trim() || '',
+        urgency_level: formData.urgency_level || 'standard',
+        additional_notes: formData.additional_notes?.trim() || '',
+        ...(formData.clinic && { clinic: parseInt(formData.clinic) }),
+        ...(formData.gps_coordinates && { gps_coordinates: formData.gps_coordinates.trim() })
+      };
+      
+      console.log('Final request data:', JSON.stringify(requestData, null, 2));
+      
+      // Make the API call directly
+      const response = await api.post('/emergency-requests/', requestData);
+      console.log('Success response:', JSON.stringify(response.data, null, 2));
+      
+      setShowCreateForm(false);
+      setFormData({
+        clinic: '',
+        location: '',
+        gps_coordinates: '',
+        condition_description: '',
+        suspected_disease: '',
+        urgency_level: 'standard',
+        additional_notes: ''
+      });
+      fetchEmergencyRequests();
+      alert('Emergency request submitted successfully!');
+    } catch (error) {
+      console.error('=== ERROR DETAILS ===');
+      console.error('Full error object:', error);
+      console.error('Error message:', error.message);
+      console.error('Error response:', error.response);
+      console.error('Error response status:', error.response?.status);
+      console.error('Error response data:', error.response?.data);
+      console.error('Error response headers:', error.response?.headers);
+      
+      // Show more specific error message
+      let errorMessage = 'Error submitting request:\n';
+      if (error.response?.data) {
+        if (typeof error.response.data === 'object') {
+          // Handle Django field validation errors
+          const fieldErrors = Object.entries(error.response.data)
+            .map(([field, messages]) => {
+              const messageText = Array.isArray(messages) ? messages.join(', ') : messages;
+              return `• ${field}: ${messageText}`;
+            })
+            .join('\n');
+          errorMessage += fieldErrors;
+        } else {
+          errorMessage += error.response.data;
+        }
+      } else {
+        errorMessage += error.message;
+      }
+      
+      alert(errorMessage);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const getStatusBadge = (status, approvalStatus) => {
+    if (approvalStatus === 'rejected') {
+      return <span className="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded-full">Rejected</span>;
+    }
+    
+    const statusMap = {
+      'P': { text: 'Pending Review', color: 'bg-yellow-100 text-yellow-800' },
+      'D': { text: 'Dispatched', color: 'bg-blue-100 text-blue-800' },
+      'A': { text: 'Ambulance Arrived', color: 'bg-purple-100 text-purple-800' },
+      'T': { text: 'In Transit to Hospital', color: 'bg-indigo-100 text-indigo-800' },
+      'C': { text: 'Completed', color: 'bg-green-100 text-green-800' }
+    };
+    
+    const statusInfo = statusMap[status] || { text: 'Unknown', color: 'bg-gray-100 text-gray-800' };
+    
+    return (
+      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${statusInfo.color}`}>
+        {statusInfo.text}
+      </span>
+    );
+  };
+
+  const getUrgencyColor = (urgency) => {
+    const colorMap = {
+      'immediate': 'text-red-600',
+      'urgent': 'text-orange-600',
+      'standard': 'text-green-600',
+      'non_urgent': 'text-gray-600'
+    };
+    return colorMap[urgency] || 'text-gray-600';
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+
+        {/* Detail Modal */}
+        {showDetailModal && selectedRequest && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-screen overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold">Emergency Request Details</h2>
                 <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  onClick={() => setShowDetailModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
                 >
-                  <Plus className="h-4 w-4" />
-                  New Emergency
-                </button>
-                <button
-                  onClick={fetchEmergencyRequests}
-                  disabled={loading}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                  Refresh
+                  <X className="w-6 h-6" />
                 </button>
               </div>
-            </div>
-          </div>
 
-          {/* Alert Messages */}
-          {error && (
-            <AlertMessage 
-              type="error" 
-              message={error} 
-              onClose={() => setError('')} 
-            />
-          )}
-
-          {success && (
-            <AlertMessage 
-              type="success" 
-              message={success} 
-              onClose={() => setSuccess('')} 
-            />
-          )}
-
-          {/* Dashboard Statistics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-6">
-            <StatCard 
-              icon={Truck} 
-              title="Dispatched" 
-              value={dashboardStats.dispatched} 
-              color="blue" 
-            />
-            <StatCard 
-              icon={Route} 
-              title="In Transit" 
-              value={dashboardStats.inTransit} 
-              color="orange" 
-            />
-            <StatCard 
-              icon={Zap} 
-              title="Critical" 
-              value={dashboardStats.critical} 
-              color="red" 
-            />
-            <StatCard 
-              icon={CheckCircle} 
-              title="Completed" 
-              value={dashboardStats.completed} 
-              color="green" 
-            />
-          </div>
-
-          {/* Filter Controls */}
-          <FilterControls />
-
-          {/* Emergency Requests List */}
-          <div className="bg-white rounded-lg shadow-sm">
-            {loading ? (
-              <div className="p-12 text-center">
-                <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-4" />
-                <p className="text-gray-600">Loading emergency requests...</p>
-              </div>
-            ) : filteredRequests.length === 0 ? (
-              <div className="p-12 text-center">
-                <Ambulance className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No emergency requests found</h3>
-                <p className="text-gray-600 mb-4">
-                  {searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' || clinicFilter !== 'all'
-                    ? 'Try adjusting your filters to see more requests'
-                    : 'No emergency requests at this time'}
-                </p>
-                {(searchTerm || statusFilter !== 'all' || priorityFilter !== 'all' || clinicFilter !== 'all') && (
-                  <button
-                    onClick={() => {
-                      setSearchTerm('');
-                      setStatusFilter('all');
-                      setPriorityFilter('all');
-                      setDiseaseFilter('all');
-                      setClinicFilter('all');
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Clear All Filters
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {filteredRequests.map((request) => (
-                  <EmergencyRequestCard key={request.id} request={request} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* =========================== MODALS =========================== */}
-          
-          {/* Create Emergency Modal */}
-          {showCreateModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                <div className="p-6 border-b border-gray-200">
-                  <h2 className="text-lg font-semibold text-gray-900">Create Emergency Request</h2>
-                </div>
-                
-                <div className="p-6 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Location *
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={createForm.location}
-                        onChange={(e) => setCreateForm(prev => ({ ...prev, location: e.target.value }))}
-                        placeholder="Enter location description"
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <button
-                        onClick={handleGetCurrentLocation}
-                        disabled={actionLoading.location}
-                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {actionLoading.location ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Crosshair className="h-4 w-4" />
-                        )}
-                        GPS
-                      </button>
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* Left Column - Basic Info */}
+                <div className="space-y-4">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Request Information</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Request ID:</span>
+                        <span className="ml-2 text-sm text-gray-600">#{selectedRequest.id}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Submitted:</span>
+                        <span className="ml-2 text-sm text-gray-600">
+                          {new Date(selectedRequest.request_time).toLocaleString()}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Status:</span>
+                        <span className="ml-2">{getStatusBadge(selectedRequest.status, selectedRequest.approval_status)}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Urgency:</span>
+                        <span className={`ml-2 text-sm font-medium ${getUrgencyColor(selectedRequest.urgency_level)}`}>
+                          {selectedRequest.urgency_level?.replace('_', ' ').toUpperCase() || 'STANDARD'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      GPS Coordinates
-                    </label>
-                    <input
-                      type="text"
-                      value={createForm.gps_coordinates}
-                      onChange={(e) => setCreateForm(prev => ({ ...prev, gps_coordinates: e.target.value }))}
-                      placeholder="Latitude, Longitude (e.g., 40.7128,-74.0060)"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Clinic (Optional)
-                    </label>
-                    <select
-                      value={createForm.clinic}
-                      onChange={(e) => setCreateForm(prev => ({ ...prev, clinic: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select clinic (optional)</option>
-                      {clinics.map(clinic => (
-                        <option key={clinic.id} value={clinic.id}>
-                          {clinic.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Condition Description *
-                    </label>
-                    <textarea
-                      rows={4}
-                      value={createForm.condition_description}
-                      onChange={(e) => setCreateForm(prev => ({ ...prev, condition_description: e.target.value }))}
-                      placeholder="Describe the emergency condition in detail..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Suspected Disease (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      value={createForm.suspected_disease}
-                      onChange={(e) => setCreateForm(prev => ({ ...prev, suspected_disease: e.target.value }))}
-                      placeholder="e.g., Malaria, Pneumonia, COVID-19"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-                
-                <div className="p-6 border-t border-gray-200">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowCreateModal(false)}
-                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleCreateRequest}
-                      disabled={actionLoading.create || !createForm.location || !createForm.condition_description}
-                      className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {actionLoading.create ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Ambulance className="h-4 w-4" />
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Location Details</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Address:</span>
+                        <p className="text-sm text-gray-600 mt-1">{selectedRequest.location}</p>
+                      </div>
+                      {selectedRequest.gps_coordinates && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">GPS Coordinates:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.gps_coordinates}</p>
+                        </div>
                       )}
-                      Create Emergency Request
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Dispatch Modal */}
-          {showDispatchModal && selectedRequest && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-md w-full">
-                <div className="p-6 border-b border-gray-200">
-                  <h2 className="text-lg font-semibold text-gray-900">Dispatch Ambulance</h2>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Assign ambulance to emergency request
-                  </p>
-                </div>
-                
-                <div className="p-6 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Ambulance ID *
-                    </label>
-                    <input
-                      type="text"
-                      value={dispatchForm.ambulanceId}
-                      onChange={(e) => setDispatchForm(prev => ({ ...prev, ambulanceId: e.target.value }))}
-                      placeholder="e.g., AMB-001"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Hospital Destination *
-                    </label>
-                    <select
-                      value={dispatchForm.hospitalDestination}
-                      onChange={(e) => setDispatchForm(prev => ({ ...prev, hospitalDestination: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Select hospital</option>
-                      {nearestHospitals.map(hospital => (
-                        <option key={hospital.id} value={hospital.name}>
-                          {hospital.name} ({hospital.distance} km away)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Estimated Arrival (Optional)
-                    </label>
-                    <input
-                      type="time"
-                      value={dispatchForm.estimatedArrival}
-                      onChange={(e) => setDispatchForm(prev => ({ ...prev, estimatedArrival: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-                
-                <div className="p-6 border-t border-gray-200">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowDispatchModal(false)}
-                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleDispatchAmbulance}
-                      disabled={actionLoading.dispatch || !dispatchForm.ambulanceId || !dispatchForm.hospitalDestination}
-                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {actionLoading.dispatch ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
+                      {selectedRequest.clinic_name && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Preferred Clinic:</span>
+                          <p className="text-sm text-blue-600 mt-1">{selectedRequest.clinic_name}</p>
+                        </div>
                       )}
-                      Dispatch Ambulance
-                    </button>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* Details Modal */}
-          {showDetailsModal && selectedRequest && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                <div className="p-6 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-gray-900">Emergency Request Details</h2>
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(selectedRequest.status)}
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(selectedRequest.status)}`}>
-                        {emergencyAmbulanceService.getStatusText(selectedRequest.status)}
-                      </span>
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Medical Information</h3>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Condition Description:</span>
+                        <p className="text-sm text-gray-600 mt-1">{selectedRequest.condition_description}</p>
+                      </div>
+                      {selectedRequest.suspected_disease && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Suspected Condition:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.suspected_disease}</p>
+                        </div>
+                      )}
+                      {selectedRequest.additional_notes && (
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Additional Notes:</span>
+                          <p className="text-sm text-gray-600 mt-1">{selectedRequest.additional_notes}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
-                
-                <div className="p-6 space-y-6">
-                  {(() => {
-                    const formatted = emergencyAmbulanceService.formatEmergencyRequest(selectedRequest);
-                    
-                    return (
-                      <>
-                        {/* Priority Level */}
-                        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                          {getPriorityIcon(formatted.priority)}
+
+                {/* Right Column - Timeline & Status */}
+                <div className="space-y-4">
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h3 className="font-semibold text-gray-900 mb-3">Status Timeline</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Request Submitted</p>
+                          <p className="text-xs text-gray-600">
+                            {new Date(selectedRequest.request_time).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {selectedRequest.approved_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                           <div>
-                            <h3 className="font-medium text-gray-900">Priority Level</h3>
-                            <p className={`text-sm font-medium ${
-                              formatted.priority === 'critical' ? 'text-red-600' :
-                              formatted.priority === 'urgent' ? 'text-orange-600' :
-                              'text-blue-600'
-                            }`}>
-                              {formatted.priority.toUpperCase()}
+                            <p className="text-sm font-medium text-gray-900">Request Approved</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.approved_at).toLocaleString()}
                             </p>
-                          </div>
-                        </div>
-
-                        {/* Patient Information */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Patient</label>
-                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                            <div className="bg-blue-100 p-2 rounded-lg">
-                              <User className="h-5 w-5 text-blue-600" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-gray-900">{formatted.patient}</p>
-                              <p className="text-sm text-gray-600">Request ID: {selectedRequest.id}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Time Information */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-1">Request Time</label>
-                            <p className="text-gray-900 font-medium">{formatted.formattedTime}</p>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-1">Time Elapsed</label>
-                            <p className="text-gray-900 font-medium">{formatted.timeAgo}</p>
-                          </div>
-                        </div>
-
-                        {/* Location */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Location</label>
-                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                            <div className="bg-green-100 p-2 rounded-lg">
-                              <MapPin className="h-5 w-5 text-green-600" />
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-medium text-gray-900">{formatted.location}</p>
-                              {formatted.gpsCoordinates && (
-                                <p className="text-sm text-gray-600">GPS: {formatted.gpsCoordinates}</p>
-                              )}
-                            </div>
-                            {formatted.gpsCoordinates && (
-                              <a
-                                href={`https://maps.google.com/?q=${formatted.gpsCoordinates}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                              >
-                                <Map className="h-4 w-4" />
-                                View Map
-                              </a>
+                            {selectedRequest.approved_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.approved_by_name}</p>
                             )}
                           </div>
                         </div>
+                      )}
 
-                        {/* Clinic Information */}
-                        {selectedRequest.clinic_name && (
+                      {selectedRequest.dispatched_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Clinic</label>
-                            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                              <div className="bg-purple-100 p-2 rounded-lg">
-                                <Building className="h-5 w-5 text-purple-600" />
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-900">{selectedRequest.clinic_name}</p>
-                                <p className="text-sm text-gray-600">Associated Clinic</p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Condition Description */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Condition Description</label>
-                          <div className="p-3 bg-gray-50 rounded-lg">
-                            <p className="text-gray-900 whitespace-pre-wrap">{formatted.condition}</p>
+                            <p className="text-sm font-medium text-gray-900">Ambulance Dispatched</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.dispatched_at).toLocaleString()}
+                            </p>
+                            {selectedRequest.dispatched_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.dispatched_by_name}</p>
+                            )}
                           </div>
                         </div>
+                      )}
 
-                        {/* Suspected Disease */}
-                        {formatted.suspectedDisease && (
+                      {selectedRequest.arrived_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
                           <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Suspected Disease</label>
-                            <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Activity className="h-4 w-4 text-yellow-600" />
-                                <p className="font-medium text-yellow-800">{formatted.suspectedDisease}</p>
-                              </div>
-                              {formatted.diseaseInfo && (
-                                <div className="text-sm text-yellow-700 space-y-1">
-                                  <p>Type: {formatted.diseaseInfo.type}</p>
-                                  <p>Contagious: {formatted.diseaseInfo.is_contagious ? 'Yes' : 'No'}</p>
-                                  <p>Emergency Threshold: {formatted.diseaseInfo.emergency_threshold}</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Ambulance Information */}
-                        {formatted.assignedAmbulance && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Assigned Ambulance</label>
-                            <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                              <div className="bg-blue-100 p-2 rounded-lg">
-                                <Truck className="h-5 w-5 text-blue-600" />
-                              </div>
-                              <div>
-                                <p className="font-medium text-blue-900">{formatted.assignedAmbulance}</p>
-                                <p className="text-sm text-blue-700">Ambulance Unit</p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Hospital Destination */}
-                        {formatted.hospitalDestination && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-500 mb-2">Hospital Destination</label>
-                            <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
-                              <div className="bg-green-100 p-2 rounded-lg">
-                                <Hospital className="h-5 w-5 text-green-600" />
-                              </div>
-                              <div>
-                                <p className="font-medium text-green-900">{formatted.hospitalDestination}</p>
-                                <p className="text-sm text-green-700">Destination Hospital</p>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Status Timeline */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-500 mb-2">Status Timeline</label>
-                          <div className="space-y-2">
-                            {[
-                              { status: 'P', label: 'Request Submitted', active: true },
-                              { status: 'D', label: 'Ambulance Dispatched', active: ['D', 'A', 'T', 'C'].includes(selectedRequest.status) },
-                              { status: 'A', label: 'Ambulance Arrived', active: ['A', 'T', 'C'].includes(selectedRequest.status) },
-                              { status: 'T', label: 'In Transit to Hospital', active: ['T', 'C'].includes(selectedRequest.status) },
-                              { status: 'C', label: 'Emergency Completed', active: selectedRequest.status === 'C' }
-                            ].map((step, index) => (
-                              <div key={step.status} className="flex items-center gap-3">
-                                <div className={`w-4 h-4 rounded-full border-2 ${
-                                  step.active 
-                                    ? 'bg-green-500 border-green-500' 
-                                    : 'bg-gray-200 border-gray-300'
-                                }`} />
-                                <div className="flex-1">
-                                  <p className={`text-sm font-medium ${
-                                    step.active ? 'text-green-900' : 'text-gray-500'
-                                  }`}>
-                                    {step.label}
-                                  </p>
-                                  {step.active && step.status === selectedRequest.status && (
-                                    <p className="text-xs text-green-600">Current Status</p>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
+                            <p className="text-sm font-medium text-gray-900">Ambulance Arrived</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.arrived_at).toLocaleString()}
+                            </p>
                           </div>
                         </div>
-                      </>
-                    );
-                  })()}
-                </div>
-                
-                <div className="p-6 border-t border-gray-200">
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowDetailsModal(false)}
-                      className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                    >
-                      Close
-                    </button>
-                    
-                    {canManage && selectedRequest.status !== 'C' && (
-                      <button
-                        onClick={() => {
-                          setShowDetailsModal(false);
-                          if (selectedRequest.status === 'P') {
-                            setShowDispatchModal(true);
-                          }
-                        }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-                      >
-                        {selectedRequest.status === 'P' ? (
-                          <>
-                            <Send className="h-4 w-4" />
-                            Dispatch Ambulance
-                          </>
-                        ) : (
-                          <>
-                            <Edit3 className="h-4 w-4" />
-                            Update Status
-                          </>
-                        )}
-                      </button>
-                    )}
+                      )}
+
+                      {selectedRequest.in_transit_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">In Transit to Hospital</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.in_transit_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedRequest.completed_at && (
+                        <div className="flex items-center gap-3">
+                          <div className="w-3 h-3 bg-green-600 rounded-full"></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">Request Completed</p>
+                            <p className="text-xs text-gray-600">
+                              {new Date(selectedRequest.completed_at).toLocaleString()}
+                            </p>
+                            {selectedRequest.completed_by_name && (
+                              <p className="text-xs text-gray-500">By: {selectedRequest.completed_by_name}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  {selectedRequest.assigned_ambulance && (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-blue-800 mb-3">Ambulance Information</h3>
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-sm font-medium text-blue-700">Ambulance ID:</span>
+                          <p className="text-sm text-blue-600 mt-1">{selectedRequest.assigned_ambulance}</p>
+                        </div>
+                        {selectedRequest.hospital_destination && (
+                          <div>
+                            <span className="text-sm font-medium text-blue-700">Hospital Destination:</span>
+                            <p className="text-sm text-blue-600 mt-1">{selectedRequest.hospital_destination}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedRequest.approval_status === 'rejected' && (
+                    <div className="bg-red-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-red-800 mb-3">Rejection Information</h3>
+                      <div className="space-y-2">
+                        {selectedRequest.rejection_reason && (
+                          <div>
+                            <span className="text-sm font-medium text-red-700">Reason:</span>
+                            <p className="text-sm text-red-600 mt-1">{selectedRequest.rejection_reason}</p>
+                          </div>
+                        )}
+                        {selectedRequest.approval_comments && (
+                          <div>
+                            <span className="text-sm font-medium text-red-700">Comments:</span>
+                            <p className="text-sm text-red-600 mt-1">{selectedRequest.approval_comments}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedRequest.patient_details && (
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h3 className="font-semibold text-gray-900 mb-3">Emergency Contact</h3>
+                      <div className="space-y-2">
+                        {selectedRequest.patient_details.emergency_contact_name && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Contact Name:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.emergency_contact_name}</p>
+                          </div>
+                        )}
+                        {selectedRequest.patient_details.emergency_contact_phone && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Contact Phone:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.emergency_contact_phone}</p>
+                          </div>
+                        )}
+                        {selectedRequest.patient_details.insurance_provider && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Insurance:</span>
+                            <p className="text-sm text-gray-600 mt-1">{selectedRequest.patient_details.insurance_provider}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Emergency Ambulance Requests</h1>
+            <p className="text-gray-600">Request emergency medical assistance and track your requests</p>
+          </div>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            Request Emergency Ambulance
+          </button>
+        </div>
+
+        {/* Emergency Notice */}
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-red-800">Emergency Notice</h3>
+              <p className="text-red-700 text-sm">
+                If this is a life-threatening emergency, call <strong>911</strong> immediately. 
+                This system is for requesting ambulance services and tracking existing requests.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Create Form Modal */}
+        {showCreateForm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-2xl mx-4 max-h-screen overflow-y-auto">
+              <h2 className="text-xl font-bold mb-4">Request Emergency Ambulance</h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Preferred Clinic (Optional)
+                  </label>
+                  <select
+                    value={formData.clinic}
+                    onChange={(e) => setFormData({...formData, clinic: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  >
+                    <option value="">Select a clinic (optional)</option>
+                    {clinics.map((clinic) => (
+                      <option key={clinic.id} value={clinic.id}>
+                        {clinic.name} - {clinic.address}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select your preferred clinic if you have one. This helps with coordination.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Current Location *
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      value={formData.location}
+                      onChange={(e) => setFormData({...formData, location: e.target.value})}
+                      placeholder="Enter your exact location or nearest landmark"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <button
+                      onClick={getCurrentLocation}
+                      disabled={gettingLocation}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                    >
+                      <Navigation className="w-4 h-4" />
+                      {gettingLocation ? 'Getting...' : 'Get Location'}
+                    </button>
+                  </div>
+                  {formData.gps_coordinates && (
+                    <p className="text-xs text-green-600 mt-1">
+                      GPS coordinates captured: {formData.gps_coordinates}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Medical Condition/Emergency *
+                  </label>
+                  <textarea
+                    required
+                    value={formData.condition_description}
+                    onChange={(e) => setFormData({...formData, condition_description: e.target.value})}
+                    placeholder="Describe your symptoms or medical emergency"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Suspected Condition (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.suspected_disease}
+                    onChange={(e) => setFormData({...formData, suspected_disease: e.target.value})}
+                    placeholder="If you know or suspect a specific condition"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Urgency Level
+                  </label>
+                  <select
+                    value={formData.urgency_level}
+                    onChange={(e) => setFormData({...formData, urgency_level: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  >
+                    <option value="immediate">Immediate (Life-threatening)</option>
+                    <option value="urgent">Urgent (Serious but not life-threatening)</option>
+                    <option value="standard">Standard (Medical attention needed)</option>
+                    <option value="non_urgent">Non-urgent (Can wait)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Additional Notes
+                  </label>
+                  <textarea
+                    value={formData.additional_notes}
+                    onChange={(e) => setFormData({...formData, additional_notes: e.target.value})}
+                    placeholder="Any additional information that might help emergency responders"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={handleSubmit}
+                    disabled={creating}
+                    className="flex-1 bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    {creating ? 'Submitting...' : 'Submit Emergency Request'}
+                  </button>
+                  <button
+                    onClick={() => setShowCreateForm(false)}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Emergency Requests List */}
+        <div className="space-y-4">
+          {emergencyRequests.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-lg">
+              <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Emergency Requests</h3>
+              <p className="text-gray-600">You haven't submitted any emergency ambulance requests yet.</p>
+            </div>
+          ) : (
+            emergencyRequests.map((request) => (
+              <div key={request.id} className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Emergency Request #{request.id}</h3>
+                      <p className="text-sm text-gray-500">
+                        Submitted on {new Date(request.request_time).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${getUrgencyColor(request.urgency_level)}`}>
+                      {request.urgency_level?.replace('_', ' ').toUpperCase() || 'STANDARD'}
+                    </span>
+                    {getStatusBadge(request.status, request.approval_status)}
+                    <button
+                      onClick={() => viewRequestDetails(request)}
+                      className="text-blue-600 hover:text-blue-800 p-1"
+                      title="View Details"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4 mb-4">
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-gray-400 mt-1" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Location</p>
+                      <p className="text-sm text-gray-600">{request.location}</p>
+                      {request.clinic_name && (
+                        <p className="text-xs text-blue-600 mt-1">Clinic: {request.clinic_name}</p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-2">
+                    <Clock className="w-4 h-4 text-gray-400 mt-1" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Status Timeline</p>
+                      <div className="text-sm text-gray-600 space-y-1">
+                        {request.approved_at && (
+                          <div className="flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-green-500" />
+                            Approved: {new Date(request.approved_at).toLocaleString()}
+                          </div>
+                        )}
+                        {request.dispatched_at && (
+                          <div className="flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-blue-500" />
+                            Dispatched: {new Date(request.dispatched_at).toLocaleString()}
+                          </div>
+                        )}
+                        {request.arrived_at && (
+                          <div className="flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-purple-500" />
+                            Arrived: {new Date(request.arrived_at).toLocaleString()}
+                          </div>
+                        )}
+                        {request.completed_at && (
+                          <div className="flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-green-600" />
+                            Completed: {new Date(request.completed_at).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t pt-4">
+                  <p className="text-sm font-medium text-gray-700 mb-1">Medical Condition</p>
+                  <p className="text-sm text-gray-600 mb-2">{request.condition_description}</p>
+                  
+                  {request.suspected_disease && (
+                    <>
+                      <p className="text-sm font-medium text-gray-700 mb-1">Suspected Condition</p>
+                      <p className="text-sm text-gray-600 mb-2">{request.suspected_disease}</p>
+                    </>
+                  )}
+
+                  {request.assigned_ambulance && (
+                    <div className="bg-blue-50 p-3 rounded-md">
+                      <p className="text-sm font-medium text-blue-800">Ambulance Assigned</p>
+                      <p className="text-sm text-blue-700">{request.assigned_ambulance}</p>
+                      {request.hospital_destination && (
+                        <p className="text-sm text-blue-700">Destination: {request.hospital_destination}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {request.approval_status === 'rejected' && request.rejection_reason && (
+                    <div className="bg-red-50 p-3 rounded-md">
+                      <p className="text-sm font-medium text-red-800">Rejection Reason</p>
+                      <p className="text-sm text-red-700">{request.rejection_reason}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -1286,4 +784,4 @@ const EmergencyManagement = () => {
   );
 };
 
-export default EmergencyManagement;
+export default PatientEmergencyPage;
