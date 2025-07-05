@@ -1,153 +1,277 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import diagnosisService from '../../services/diagnosisService';
+import { useAuth } from '../../contexts/AuthContext';
 import { 
-  AlertTriangle, 
-  CheckCircle, 
+  FileText, 
   Clock, 
-  Activity, 
-  Phone, 
-  MapPin, 
   User, 
-  Heart, 
+  Shield, 
+  CheckCircle, 
+  X, 
+  Eye, 
+  Calendar, 
+  Activity,
+  AlertTriangle,
   Thermometer,
-  FileText,
+  Heart,
+  Filter,
+  Search,
+  Download,
+  Plus,
+  Stethoscope,
   RefreshCw,
-  Hospital,
-  ShieldAlert,
-  Info,
-  Calendar,
-  Plus
+  ChevronDown,
+  ChevronUp,
+  MoreHorizontal,
+  ExternalLink
 } from 'lucide-react';
 
-const SymptomResultsPage = () => {
-  const { sessionId } = useParams();
+const PatientDiagnosesPage = () => {
   const navigate = useNavigate();
-  const [session, setSession] = useState(null);
-  const [analyses, setAnalyses] = useState([]);
+  const { user } = useAuth();
+  const [diagnoses, setDiagnoses] = useState([]);
+  const [filteredDiagnoses, setFilteredDiagnoses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [selectedDiagnosis, setSelectedDiagnosis] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [sortConfig, setSortConfig] = useState({ key: 'created_at', direction: 'desc' });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  
+  const [filters, setFilters] = useState({
+    status: 'all',
+    severity: 'all',
+    dateRange: 'all',
+    search: ''
+  });
 
   useEffect(() => {
-    console.log('Session ID from params:', sessionId);
-    if (sessionId && sessionId !== ':sessionId') {
-      loadSessionData();
-    } else {
-      setError('Invalid session ID');
-      setLoading(false);
-    }
-  }, [sessionId]);
+    loadDiagnoses();
+  }, []);
 
-  const loadSessionData = async () => {
+  useEffect(() => {
+    applyFilters();
+  }, [diagnoses, filters]);
+
+  const loadDiagnoses = async () => {
     try {
       setLoading(true);
       setError('');
       
-      console.log('Loading session data for ID:', sessionId);
+      console.log('Loading diagnoses for user:', user);
       
-      // Load session details
-      const sessionResponse = await diagnosisService.sessions.get(sessionId);
-      console.log('Session response:', sessionResponse.data);
-      setSession(sessionResponse.data);
+      const response = await diagnosisService.diagnoses.list();
+      const diagnosesData = response.data.results || response.data || [];
       
-      // Load disease analyses for this session
-      try {
-        const analysesResponse = await diagnosisService.analyses.getBySession(sessionId);
-        console.log('Analyses response:', analysesResponse.data);
-        setAnalyses(analysesResponse.data.results || analysesResponse.data || []);
-      } catch (analysesError) {
-        console.log('No analyses found:', analysesError);
-        setAnalyses([]);
-      }
+      console.log('Loaded diagnoses:', diagnosesData);
       
+      const sortedDiagnoses = diagnosesData.sort((a, b) => 
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+      
+      setDiagnoses(sortedDiagnoses);
     } catch (error) {
-      console.error('Error loading session data:', error);
-      setError('Failed to load session data: ' + (error.response?.data?.error || error.message));
+      console.error('Error loading diagnoses:', error);
+      setError('Failed to load medical records: ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
   };
 
-  const getSeverityIcon = (severity) => {
-    switch (severity?.toLowerCase()) {
-      case 'critical':
-        return <AlertTriangle className="w-5 h-5 text-red-600" />;
-      case 'severe':
-        return <ShieldAlert className="w-5 h-5 text-orange-600" />;
-      case 'moderate':
-        return <Clock className="w-5 h-5 text-yellow-600" />;
-      case 'mild':
-        return <CheckCircle className="w-5 h-5 text-green-600" />;
-      default:
-        return <Activity className="w-5 h-5 text-gray-600" />;
+  const applyFilters = () => {
+    let filtered = [...diagnoses];
+
+    if (filters.status !== 'all') {
+      filtered = filtered.filter(diagnosis => diagnosis.status === filters.status);
     }
+
+    if (filters.severity !== 'all') {
+      filtered = filtered.filter(diagnosis => diagnosis.severity === filters.severity);
+    }
+
+    if (filters.dateRange !== 'all') {
+      const now = new Date();
+      let filterDate = null;
+      
+      switch (filters.dateRange) {
+        case 'today':
+          filterDate = new Date();
+          filterDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          filterDate = new Date();
+          filterDate.setDate(now.getDate() - 7);
+          break;
+        case 'month':
+          filterDate = new Date();
+          filterDate.setMonth(now.getMonth() - 1);
+          break;
+        case 'year':
+          filterDate = new Date();
+          filterDate.setFullYear(now.getFullYear() - 1);
+          break;
+        default:
+          filterDate = null;
+      }
+      
+      if (filterDate) {
+        filtered = filtered.filter(diagnosis => new Date(diagnosis.created_at) >= filterDate);
+      }
+    }
+
+    if (filters.search) {
+      const searchTerm = filters.search.toLowerCase();
+      filtered = filtered.filter(diagnosis => 
+        diagnosis.disease?.name?.toLowerCase().includes(searchTerm) ||
+        diagnosis.treating_doctor?.first_name?.toLowerCase().includes(searchTerm) ||
+        diagnosis.treating_doctor?.last_name?.toLowerCase().includes(searchTerm) ||
+        diagnosis.doctor_notes?.toLowerCase().includes(searchTerm) ||
+        JSON.stringify(diagnosis.symptoms || {}).toLowerCase().includes(searchTerm)
+      );
+    }
+
+    setFilteredDiagnoses(filtered);
+    setCurrentPage(1); // Reset to first page when filters change
   };
 
-  const getSeverityColor = (severity) => {
-    switch (severity?.toLowerCase()) {
-      case 'critical':
-        return 'bg-red-50 border-red-200 text-red-800';
-      case 'severe':
-        return 'bg-orange-50 border-orange-200 text-orange-800';
-      case 'moderate':
-        return 'bg-yellow-50 border-yellow-200 text-yellow-800';
-      case 'mild':
-        return 'bg-green-50 border-green-200 text-green-800';
-      default:
-        return 'bg-gray-50 border-gray-200 text-gray-800';
+  const handleSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
     }
+    setSortConfig({ key, direction });
+
+    const sorted = [...filteredDiagnoses].sort((a, b) => {
+      let aValue = a[key];
+      let bValue = b[key];
+
+      // Handle nested properties
+      if (key === 'disease') {
+        aValue = a.disease?.name || '';
+        bValue = b.disease?.name || '';
+      } else if (key === 'doctor') {
+        aValue = a.treating_doctor ? `${a.treating_doctor.first_name} ${a.treating_doctor.last_name}` : '';
+        bValue = b.treating_doctor ? `${b.treating_doctor.first_name} ${b.treating_doctor.last_name}` : '';
+      } else if (key === 'created_at') {
+        aValue = new Date(a.created_at);
+        bValue = new Date(b.created_at);
+      }
+
+      if (aValue < bValue) return direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    setFilteredDiagnoses(sorted);
+  };
+
+  const getStatusBadge = (status) => {
+    const statusMap = {
+      'self_reported': { text: 'Self-Reported', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+      'doctor_confirmed': { text: 'Confirmed', color: 'bg-green-100 text-green-800 border-green-200' },
+      'doctor_rejected': { text: 'Rejected', color: 'bg-red-100 text-red-800 border-red-200' },
+      'modified': { text: 'Modified', color: 'bg-blue-100 text-blue-800 border-blue-200' }
+    };
+    
+    const statusInfo = statusMap[status] || { text: 'Unknown', color: 'bg-gray-100 text-gray-800 border-gray-200' };
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${statusInfo.color}`}>
+        {statusInfo.text}
+      </span>
+    );
+  };
+
+  const getSeverityBadge = (severity) => {
+    if (!severity) return null;
+    
+    const severityMap = {
+      'critical': { text: 'Critical', color: 'bg-red-100 text-red-800 border-red-200', icon: AlertTriangle },
+      'severe': { text: 'Severe', color: 'bg-orange-100 text-orange-800 border-orange-200', icon: Shield },
+      'moderate': { text: 'Moderate', color: 'bg-yellow-100 text-yellow-800 border-yellow-200', icon: Clock },
+      'mild': { text: 'Mild', color: 'bg-green-100 text-green-800 border-green-200', icon: CheckCircle }
+    };
+    
+    const severityInfo = severityMap[severity.toLowerCase()] || { text: severity, color: 'bg-gray-100 text-gray-800 border-gray-200', icon: Activity };
+    const IconComponent = severityInfo.icon;
+    
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full border ${severityInfo.color}`}>
+        <IconComponent className="w-3 h-3" />
+        {severityInfo.text}
+      </span>
+    );
   };
 
   const formatSymptomDisplay = (symptom) => {
     return symptom.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
-  const handleCreateDiagnosis = async () => {
-    if (!session) return;
+  const getSymptomsSummary = (symptoms) => {
+    if (!symptoms) return 'No symptoms recorded';
     
-    setCreating(true);
-    try {
-      console.log('Creating diagnosis for session:', sessionId);
-      const response = await diagnosisService.sessions.createDiagnosis(sessionId);
-      console.log('Diagnosis created:', response.data);
-      
-      // Show success message
-      alert('Diagnosis record created successfully! You can track it in your medical records.');
-      
-      // Navigate to diagnoses page
-      navigate('/patient/diagnoses');
-    } catch (error) {
-      console.error('Error creating diagnosis:', error);
-      
-      let errorMessage = 'Error creating diagnosis record';
-      if (error.response?.data?.error) {
-        errorMessage += ': ' + error.response.data.error;
-      } else if (error.message) {
-        errorMessage += ': ' + error.message;
-      }
-      
-      alert(errorMessage);
-    } finally {
-      setCreating(false);
-    }
+    const selectedSymptoms = symptoms.selected || [];
+    const customSymptoms = symptoms.custom || [];
+    const allSymptoms = [...selectedSymptoms, ...customSymptoms];
+    
+    if (allSymptoms.length === 0) return 'No symptoms recorded';
+    if (allSymptoms.length <= 2) return allSymptoms.map(formatSymptomDisplay).join(', ');
+    
+    return `${allSymptoms.slice(0, 2).map(formatSymptomDisplay).join(', ')} +${allSymptoms.length - 2} more`;
   };
 
-  const handleRequestEmergency = () => {
-    navigate('/patient/emergency', { 
-      state: { 
-        fromSymptomChecker: true, 
-        sessionId: sessionId,
-        condition: session?.primary_suspected_disease?.name,
-        symptoms: [...(session?.selected_symptoms || []), ...(session?.custom_symptoms || [])]
-      } 
-    });
+  const getVitalsSummary = (diagnosis) => {
+    const vitals = [];
+    if (diagnosis.temperature) vitals.push(`${diagnosis.temperature}°F`);
+    if (diagnosis.heart_rate) vitals.push(`${diagnosis.heart_rate} BPM`);
+    if (diagnosis.blood_pressure) vitals.push(diagnosis.blood_pressure);
+    
+    return vitals.length > 0 ? vitals.join(' • ') : 'Not recorded';
   };
 
-  const handleNewAnalysis = () => {
-    navigate('/patient/symptom-checker');
+  const viewDiagnosisDetails = (diagnosis) => {
+    setSelectedDiagnosis(diagnosis);
+    setShowDetailModal(true);
   };
+
+  const getStatistics = () => {
+    const totalDiagnoses = diagnoses.length;
+    const confirmedCount = diagnoses.filter(d => d.status === 'doctor_confirmed').length;
+    const pendingCount = diagnoses.filter(d => d.status === 'self_reported').length;
+    const recentCount = diagnoses.filter(d => {
+      const diagnosisDate = new Date(d.created_at);
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      return diagnosisDate >= monthAgo;
+    }).length;
+
+    return { total: totalDiagnoses, confirmed: confirmedCount, pending: pendingCount, recent: recentCount };
+  };
+
+  // Pagination
+  const totalPages = Math.ceil(filteredDiagnoses.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentDiagnoses = filteredDiagnoses.slice(startIndex, endIndex);
+
+  const stats = getStatistics();
+
+  const SortableHeader = ({ column, children, className = "" }) => (
+    <th 
+      className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 ${className}`}
+      onClick={() => handleSort(column)}
+    >
+      <div className="flex items-center gap-1">
+        {children}
+        {sortConfig.key === column && (
+          sortConfig.direction === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />
+        )}
+      </div>
+    </th>
+  );
 
   if (loading) {
     return (
@@ -155,7 +279,7 @@ const SymptomResultsPage = () => {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading your analysis results...</p>
+            <p className="text-gray-600">Loading your medical records...</p>
           </div>
         </div>
       </DashboardLayout>
@@ -167,20 +291,21 @@ const SymptomResultsPage = () => {
       <DashboardLayout>
         <div className="text-center py-12">
           <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Results</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Records</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           <div className="flex gap-3 justify-center">
             <button
-              onClick={loadSessionData}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              onClick={loadDiagnoses}
+              className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
+              <RefreshCw className="w-4 h-4" />
               Try Again
             </button>
             <button
-              onClick={handleNewAnalysis}
+              onClick={() => navigate('/patient/symptom-checker')}
               className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              Start New Analysis
+              Start New Check
             </button>
           </div>
         </div>
@@ -188,353 +313,563 @@ const SymptomResultsPage = () => {
     );
   }
 
-  if (!session) {
-    return (
-      <DashboardLayout>
-        <div className="text-center py-12">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Session Not Found</h2>
-          <p className="text-gray-600 mb-4">The symptom analysis session could not be found.</p>
-          <button
-            onClick={handleNewAnalysis}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Start New Analysis
-          </button>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  // Default values for missing data
-  const severity = session.severity_level || 'mild';
-  const recommendation = session.recommendation || 'Continue monitoring your symptoms. Consult a healthcare provider if symptoms worsen.';
-  const riskScore = session.overall_risk_score || 0;
-
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="space-y-6">
         {/* Header */}
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Symptom Analysis Results</h1>
-          <p className="text-gray-600">Based on your symptoms and additional information</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Medical Records</h1>
+            <p className="text-gray-600">View your diagnoses and medical history</p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={loadDiagnoses}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+            <button
+              onClick={() => navigate('/patient/symptom-checker')}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              New Symptom Check
+            </button>
+          </div>
         </div>
 
-        {/* Overall Assessment */}
-        <div className={`rounded-lg border-2 p-6 ${getSeverityColor(severity)}`}>
-          <div className="flex items-start gap-4">
-            <div className="flex-shrink-0">
-              {getSeverityIcon(severity)}
+        {/* Statistics Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Records</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+              </div>
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <FileText className="w-5 h-5 text-blue-600" />
+              </div>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold mb-2">
-                Overall Assessment: {severity.charAt(0).toUpperCase() + severity.slice(1)}
-              </h2>
-              <p className="text-lg mb-3">{recommendation}</p>
-              
-              {session.primary_suspected_disease && (
-                <div className="mb-3">
-                  <p className="font-semibold">Primary Suspected Condition:</p>
-                  <p className="text-lg">{session.primary_suspected_disease.name}</p>
-                  {session.primary_suspected_disease.description && (
-                    <p className="text-sm mt-1 opacity-90">{session.primary_suspected_disease.description}</p>
-                  )}
-                </div>
-              )}
-              
-              <div className="flex items-center gap-2 text-sm">
-                <Activity className="w-4 h-4" />
-                <span>Risk Score: {riskScore}</span>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Doctor Confirmed</p>
+                <p className="text-2xl font-bold text-green-600">{stats.confirmed}</p>
+              </div>
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Pending Review</p>
+                <p className="text-2xl font-bold text-yellow-600">{stats.pending}</p>
+              </div>
+              <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                <Clock className="w-5 h-5 text-yellow-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Recent (30 days)</p>
+                <p className="text-2xl font-bold text-blue-600">{stats.recent}</p>
+              </div>
+              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                <Calendar className="w-5 h-5 text-blue-600" />
               </div>
             </div>
           </div>
         </div>
 
-        {/* Emergency Actions */}
-        {(severity === 'critical' || severity === 'severe') && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-6 h-6 text-red-600 mt-1" />
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-red-800 mb-2">Immediate Action Required</h3>
-                <p className="text-red-700 mb-4">
-                  Your symptoms suggest you need {severity === 'critical' ? 'immediate emergency' : 'prompt medical'} attention.
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {severity === 'critical' && (
-                    <a
-                      href="tel:911"
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+        {/* Filters */}
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="w-5 h-5 text-gray-600" />
+            <h3 className="font-medium text-gray-900">Filters</h3>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters({...filters, status: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Status</option>
+                <option value="self_reported">Self-Reported</option>
+                <option value="doctor_confirmed">Doctor Confirmed</option>
+                <option value="doctor_rejected">Doctor Rejected</option>
+                <option value="modified">Modified</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Severity</label>
+              <select
+                value={filters.severity}
+                onChange={(e) => setFilters({...filters, severity: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Severities</option>
+                <option value="mild">Mild</option>
+                <option value="moderate">Moderate</option>
+                <option value="severe">Severe</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date Range</label>
+              <select
+                value={filters.dateRange}
+                onChange={(e) => setFilters({...filters, dateRange: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">Last Week</option>
+                <option value="month">Last Month</option>
+                <option value="year">Last Year</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Per Page</label>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={5}>5 records</option>
+                <option value={10}>10 records</option>
+                <option value={25}>25 records</option>
+                <option value={50}>50 records</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search records..."
+                  value={filters.search}
+                  onChange={(e) => setFilters({...filters, search: e.target.value})}
+                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          {filteredDiagnoses.length === 0 ? (
+            <div className="text-center py-12">
+              <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                {diagnoses.length === 0 ? 'No Medical Records' : 'No Results Found'}
+              </h3>
+              <p className="text-gray-600 mb-4">
+                {diagnoses.length === 0 
+                  ? "You don't have any medical records yet."
+                  : "No records match your current filters."
+                }
+              </p>
+              {diagnoses.length === 0 && (
+                <button
+                  onClick={() => navigate('/patient/symptom-checker')}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Start Symptom Check
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <SortableHeader column="created_at">Date</SortableHeader>
+                      <SortableHeader column="disease">Condition</SortableHeader>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Symptoms
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Vitals
+                      </th>
+                      <SortableHeader column="severity">Severity</SortableHeader>
+                      <SortableHeader column="status">Status</SortableHeader>
+                      <SortableHeader column="doctor">Doctor</SortableHeader>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {currentDiagnoses.map((diagnosis) => {
+                      const diagnosisDate = new Date(diagnosis.created_at);
+                      
+                      return (
+                        <tr key={diagnosis.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">
+                              {diagnosisDate.toLocaleDateString()}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {diagnosisDate.toLocaleTimeString()}
+                            </div>
+                          </td>
+                          
+                          <td className="px-6 py-4">
+                            <div className="flex items-center">
+                              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                                <Stethoscope className="w-4 h-4 text-blue-600" />
+                              </div>
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">
+                                  {diagnosis.disease?.name || 'Unknown Condition'}
+                                </div>
+                                {diagnosis.disease?.category && (
+                                  <div className="text-xs text-gray-500">
+                                    {diagnosis.disease.category}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-900 max-w-xs">
+                              {getSymptomsSummary(diagnosis.symptoms)}
+                            </div>
+                          </td>
+                          
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-900">
+                              {getVitalsSummary(diagnosis)}
+                            </div>
+                          </td>
+                          
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {getSeverityBadge(diagnosis.severity)}
+                          </td>
+                          
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {getStatusBadge(diagnosis.status)}
+                          </td>
+                          
+                          <td className="px-6 py-4">
+                            {diagnosis.treating_doctor ? (
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">
+                                  Dr. {diagnosis.treating_doctor.first_name} {diagnosis.treating_doctor.last_name}
+                                </div>
+                                {diagnosis.confirmed_at && (
+                                  <div className="text-xs text-gray-500">
+                                    Confirmed {new Date(diagnosis.confirmed_at).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-sm text-gray-500">Not assigned</span>
+                            )}
+                          </td>
+                          
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => viewDiagnosisDetails(diagnosis)}
+                                className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50 transition-colors"
+                                title="View Details"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                              {diagnosis.session && (
+                                <button
+                                  onClick={() => navigate(`/patient/symptom-checker/results/${diagnosis.session.id}`)}
+                                  className="text-gray-600 hover:text-gray-800 p-1 rounded hover:bg-gray-50 transition-colors"
+                                  title="View Original Analysis"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+                  <div className="flex-1 flex justify-between sm:hidden">
+                    <button
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
                     >
-                      <Phone className="w-4 h-4" />
-                      Call 911
-                    </a>
-                  )}
-                  <button
-                    onClick={handleRequestEmergency}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    <Hospital className="w-4 h-4" />
-                    Request Medical Help
-                  </button>
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                  <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm text-gray-700">
+                        Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                        <span className="font-medium">{Math.min(endIndex, filteredDiagnoses.length)}</span> of{' '}
+                        <span className="font-medium">{filteredDiagnoses.length}</span> results
+                      </p>
+                    </div>
+                    <div>
+                      <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                        <button
+                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Previous
+                        </button>
+                        
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNumber;
+                          if (totalPages <= 5) {
+                            pageNumber = i + 1;
+                          } else if (currentPage <= 3) {
+                            pageNumber = i + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNumber = totalPages - 4 + i;
+                          } else {
+                            pageNumber = currentPage - 2 + i;
+                          }
+                          
+                          return (
+                            <button
+                              key={pageNumber}
+                              onClick={() => setCurrentPage(pageNumber)}
+                              className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                                currentPage === pageNumber
+                                  ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                                  : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                              }`}
+                            >
+                              {pageNumber}
+                            </button>
+                          );
+                        })}
+                        
+                        <button
+                          onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage === totalPages}
+                          className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Next
+                        </button>
+                      </nav>
+                    </div>
+                  </div>
                 </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Detail Modal */}
+        {showDetailModal && selectedDiagnosis && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-screen overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-gray-900">Diagnosis Details</h2>
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="text-gray-500 hover:text-gray-700 p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Condition</h3>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                        <Stethoscope className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{selectedDiagnosis.disease?.name || 'Unknown'}</p>
+                        {selectedDiagnosis.disease?.category && (
+                          <p className="text-sm text-gray-500">{selectedDiagnosis.disease.category}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Status & Severity</h3>
+                    <div className="flex gap-2">
+                      {getStatusBadge(selectedDiagnosis.status)}
+                      {getSeverityBadge(selectedDiagnosis.severity)}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Date & Time</h3>
+                    <p className="text-gray-900">{new Date(selectedDiagnosis.created_at).toLocaleString()}</p>
+                  </div>
+                  
+                  {selectedDiagnosis.treating_doctor && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Treating Doctor</h3>
+                      <div className="flex items-center gap-2">
+                        <User className="w-4 h-4 text-gray-600" />
+                        <span className="text-gray-900">
+                          Dr. {selectedDiagnosis.treating_doctor.first_name} {selectedDiagnosis.treating_doctor.last_name}
+                        </span>
+                      </div>
+                      {selectedDiagnosis.confirmed_at && (
+                        <p className="text-sm text-green-600 mt-1">
+                          Confirmed on {new Date(selectedDiagnosis.confirmed_at).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Symptoms</h3>
+                    <div className="space-y-2">
+                      {selectedDiagnosis.symptoms?.selected && selectedDiagnosis.symptoms.selected.length > 0 && (
+                        <div>
+                          <p className="text-xs text-blue-600 font-medium mb-1">Selected Symptoms:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {selectedDiagnosis.symptoms.selected.map((symptom, index) => (
+                              <span
+                                key={index}
+                                className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full"
+                              >
+                                {formatSymptomDisplay(symptom)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {selectedDiagnosis.symptoms?.custom && selectedDiagnosis.symptoms.custom.length > 0 && (
+                        <div>
+                          <p className="text-xs text-green-600 font-medium mb-1">Custom Symptoms:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {selectedDiagnosis.symptoms.custom.map((symptom, index) => (
+                              <span
+                                key={index}
+                                className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded-full"
+                              >
+                                {symptom}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {(!selectedDiagnosis.symptoms?.selected || selectedDiagnosis.symptoms.selected.length === 0) &&
+                       (!selectedDiagnosis.symptoms?.custom || selectedDiagnosis.symptoms.custom.length === 0) && (
+                        <p className="text-gray-500 text-sm">No symptoms recorded</p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Vital Signs</h3>
+                    <div className="space-y-2">
+                      {selectedDiagnosis.temperature && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Thermometer className="w-4 h-4 text-red-500" />
+                          <span className="text-gray-700">Temperature:</span>
+                          <span className="font-medium">{selectedDiagnosis.temperature}°F</span>
+                        </div>
+                      )}
+                      {selectedDiagnosis.heart_rate && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Heart className="w-4 h-4 text-red-500" />
+                          <span className="text-gray-700">Heart Rate:</span>
+                          <span className="font-medium">{selectedDiagnosis.heart_rate} BPM</span>
+                        </div>
+                      )}
+                      {selectedDiagnosis.blood_pressure && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Activity className="w-4 h-4 text-blue-500" />
+                          <span className="text-gray-700">Blood Pressure:</span>
+                          <span className="font-medium">{selectedDiagnosis.blood_pressure}</span>
+                        </div>
+                      )}
+                      {!selectedDiagnosis.temperature && !selectedDiagnosis.heart_rate && !selectedDiagnosis.blood_pressure && (
+                        <p className="text-gray-500 text-sm">No vital signs recorded</p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {selectedDiagnosis.session && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Related Session</h3>
+                      <button
+                        onClick={() => {
+                          setShowDetailModal(false);
+                          navigate(`/patient/symptom-checker/results/${selectedDiagnosis.session.id}`);
+                        }}
+                        className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 underline"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View Original Symptom Analysis
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {selectedDiagnosis.doctor_notes && (
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Doctor's Notes</h3>
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <p className="text-gray-900 whitespace-pre-wrap">{selectedDiagnosis.doctor_notes}</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex justify-end mt-6 pt-6 border-t border-gray-200">
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>
         )}
-
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Symptoms Summary */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Symptoms</h3>
-              
-              {session.selected_symptoms && session.selected_symptoms.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Selected Symptoms:</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {session.selected_symptoms.map((symptom, index) => (
-                      <span
-                        key={index}
-                        className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
-                      >
-                        {formatSymptomDisplay(symptom)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {session.custom_symptoms && session.custom_symptoms.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Additional Symptoms:</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {session.custom_symptoms.map((symptom, index) => (
-                      <span
-                        key={index}
-                        className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm"
-                      >
-                        {symptom}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Vital Signs */}
-              {(session.temperature || session.heart_rate) && (
-                <div className="mt-4 p-3 bg-gray-50 rounded-md">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Vital Signs:</h4>
-                  <div className="flex gap-4 text-sm">
-                    {session.temperature && (
-                      <div className="flex items-center gap-1">
-                        <Thermometer className="w-4 h-4 text-gray-500" />
-                        <span>{session.temperature}°F</span>
-                      </div>
-                    )}
-                    {session.heart_rate && (
-                      <div className="flex items-center gap-1">
-                        <Heart className="w-4 h-4 text-gray-500" />
-                        <span>{session.heart_rate} BPM</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Disease Analysis Results */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Possible Conditions</h3>
-              
-              {analyses.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p>Analysis in progress or no specific conditions identified.</p>
-                  <button 
-                    onClick={loadSessionData}
-                    className="mt-2 text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Refresh to check for updates
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {analyses.map((analysis, index) => (
-                    <div
-                      key={analysis.id}
-                      className={`p-4 rounded-lg border ${
-                        index === 0 ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <h4 className="font-semibold text-gray-900">
-                            {analysis.disease?.name || 'Unknown Condition'}
-                            {index === 0 && (
-                              <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                                Primary Match
-                              </span>
-                            )}
-                          </h4>
-                          {analysis.disease?.description && (
-                            <p className="text-sm text-gray-600 mt-1">{analysis.disease.description}</p>
-                          )}
-                        </div>
-                        <div className="text-right">
-                          <div className="text-lg font-bold text-gray-900">
-                            {Math.round(analysis.probability_percentage || analysis.calculated_score || 0)}%
-                          </div>
-                          <div className="text-xs text-gray-500">Match</div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-1">
-                            <Activity className="w-4 h-4 text-gray-500" />
-                            <span>Score: {analysis.calculated_score || 0}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {getSeverityIcon(analysis.severity_assessment || 'mild')}
-                            <span className="capitalize">{analysis.severity_assessment || 'mild'}</span>
-                          </div>
-                        </div>
-                        
-                        {analysis.disease?.icd_code && (
-                          <div className="text-xs text-gray-500">
-                            ICD: {analysis.disease.icd_code}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Session Info */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Session Information</h3>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-gray-500" />
-                  <span>
-                    {new Date(session.created_at).toLocaleDateString()} at{' '}
-                    {new Date(session.created_at).toLocaleTimeString()}
-                  </span>
-                </div>
-                
-                {session.location && (
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-gray-500" />
-                    <span>{session.location}</span>
-                  </div>
-                )}
-                
-                {session.age_range && (
-                  <div className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-gray-500" />
-                    <span>Age: {session.age_range}</span>
-                  </div>
-                )}
-                
-                {session.gender && (
-                  <div className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-gray-500" />
-                    <span>Gender: {session.gender}</span>
-                  </div>
-                )}
-              </div>
-
-              {session.needs_followup && (
-                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                  <div className="flex items-center gap-2 text-yellow-800">
-                    <Clock className="w-4 h-4" />
-                    <span className="font-medium">Follow-up Needed</span>
-                  </div>
-                  {session.followup_date && (
-                    <p className="text-sm text-yellow-700 mt-1">
-                      By: {new Date(session.followup_date).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Actions */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Actions</h3>
-              <div className="space-y-3">
-                <button
-                  onClick={handleCreateDiagnosis}
-                  disabled={creating}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  {creating ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="w-4 h-4" />
-                      Create Diagnosis Record
-                    </>
-                  )}
-                </button>
-
-                {severity !== 'mild' && (
-                  <button
-                    onClick={handleRequestEmergency}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    <Hospital className="w-4 h-4" />
-                    Request Medical Help
-                  </button>
-                )}
-
-                <button
-                  onClick={handleNewAnalysis}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  New Symptom Check
-                </button>
-
-                <button
-                  onClick={loadSessionData}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Refresh Results
-                </button>
-              </div>
-            </div>
-
-            {/* Disclaimer */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <div className="flex items-start gap-2">
-                <Info className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                <div>
-                  <h4 className="font-medium text-yellow-800 mb-1">Medical Disclaimer</h4>
-                  <p className="text-sm text-yellow-700">
-                    This analysis is for informational purposes only and should not replace 
-                    professional medical advice, diagnosis, or treatment. Always consult with 
-                    a qualified healthcare provider.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </DashboardLayout>
   );
 };
 
-export default SymptomResultsPage;
+export default PatientDiagnosesPage;
