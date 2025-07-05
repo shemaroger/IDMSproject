@@ -622,23 +622,10 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("You can only update your own appointments")
         
         return value
-
-
-
 class PreventionTipSerializer(serializers.ModelSerializer):
-    """
-    Serializer for PreventionTip model
-    """
-    disease_name = serializers.CharField(source='disease.name', read_only=True)
-    
     class Meta:
         model = PreventionTip
-        fields = [
-            'id', 'disease', 'disease_name', 'category', 'title', 
-            'description', 'priority', 'created_at'
-        ]
-        read_only_fields = ['created_at']
-
+        fields = '__all__'
 
 class EmergencyAmbulanceRequestSerializer(serializers.ModelSerializer):
     """

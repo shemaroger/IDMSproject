@@ -2439,6 +2439,11 @@ class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
             'request': self.get_serializer(emergency_request).data
         })
 
+class PreventionTipViewSet(viewsets.ModelViewSet):
+    queryset = PreventionTip.objects.all()
+    serializer_class = PreventionTipSerializer
+
+    
 # Additional utility views for symptom checker integration
 
 

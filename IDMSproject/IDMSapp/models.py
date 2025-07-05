@@ -1100,18 +1100,40 @@ class PreventionTip(models.Model):
         ('when_to_seek_help', 'When to Seek Help'),
         ('emergency_signs', 'Emergency Signs'),
     ]
-    
-    disease = models.ForeignKey(Disease, on_delete=models.CASCADE, related_name='prevention_tips')
+
+    # Link to a Disease
+    disease = models.ForeignKey(
+        Disease,
+        on_delete=models.CASCADE,
+        related_name='prevention_tips'
+    )
+
+    # Category of the tip
     category = models.CharField(max_length=20, choices=TIP_CATEGORIES)
+
+    # Title and description of the tip
     title = models.CharField(max_length=200)
     description = models.TextField()
+
+    # Priority of the tip
     priority = models.IntegerField(default=1, help_text="1=highest priority, 10=lowest")
-    
+
+    # Image field to store related images
+    image = models.ImageField(upload_to='prevention_tips/images/', null=True, blank=True)
+
+    # File field to store related videos
+    video = models.FileField(upload_to='prevention_tips/videos/', null=True, blank=True)
+
+    # URL field to store links to external videos or resources
+    video_url = models.URLField(null=True, blank=True)
+
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
-    
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ['priority', 'category']
-    
+
     def __str__(self):
         return f"{self.disease.name}: {self.title}"
 
