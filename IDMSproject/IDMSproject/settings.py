@@ -159,6 +159,7 @@ SIMPLE_JWT = {
 # Authentication Backends
 AUTH_USER_MODEL = 'IDMSapp.User'  # Point to your custom user model
 
+
 # Database
 # https://docs.djangoproject.com/en/4.1/ref/settings/#databases
 

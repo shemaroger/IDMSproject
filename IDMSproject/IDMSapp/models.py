@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+from django.conf import settings
 from django.core.exceptions import ValidationError
 import os
 
@@ -390,7 +391,7 @@ class Appointment(models.Model):
         ]
 class EmergencyAmbulanceRequest(models.Model):
     """
-    Manages emergency ambulance requests
+    Manages emergency ambulance requests with clinic association
     """
     STATUS_CHOICES = [
         ('P', 'Pending'),
@@ -400,26 +401,106 @@ class EmergencyAmbulanceRequest(models.Model):
         ('C', 'Completed'),
     ]
     
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+    APPROVAL_STATUS_CHOICES = [
+        ('pending', 'Pending Approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    # Basic request information
+    patient = models.ForeignKey('Patient', on_delete=models.CASCADE)
+    clinic = models.ForeignKey('Clinic', on_delete=models.SET_NULL, null=True, blank=True)
     request_time = models.DateTimeField(auto_now_add=True)
+    
+    # Location information
     location = models.CharField(max_length=255)
     gps_coordinates = models.CharField(max_length=50, blank=True)  # "lat,long" format
+    
+    # Medical information
     condition_description = models.TextField()
+    suspected_disease = models.CharField(max_length=100, blank=True)
+    
+    # Status tracking
     status = models.CharField(max_length=1, choices=STATUS_CHOICES, default='P')
+    approval_status = models.CharField(max_length=10, choices=APPROVAL_STATUS_CHOICES, default='pending')
+    
+    # Ambulance and hospital information
     assigned_ambulance = models.CharField(max_length=100, blank=True)
     hospital_destination = models.CharField(max_length=255, blank=True)
     
-    # Link to disease surveillance if relevant
-    suspected_disease = models.CharField(max_length=100, blank=True)  # "Malaria", "Pneumonia", etc.
+    # Approval tracking
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_emergency_requests')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_comments = models.TextField(blank=True)
+    rejection_reason = models.CharField(max_length=255, blank=True)
     
+    # Dispatch tracking
+    dispatched_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='dispatched_emergency_requests')
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    
+    # Timeline tracking
+    arrived_at = models.DateTimeField(null=True, blank=True)
+    in_transit_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='completed_emergency_requests')
+    
+    # Priority and urgency overrides
+    priority_override = models.CharField(
+        max_length=10, 
+        choices=[('critical', 'Critical'), ('urgent', 'Urgent'), ('normal', 'Normal')],
+        blank=True
+    )
+    urgency_level = models.CharField(
+        max_length=15,
+        choices=[
+            ('immediate', 'Immediate'),
+            ('urgent', 'Urgent'),
+            ('standard', 'Standard'),
+            ('non_urgent', 'Non-Urgent')
+        ],
+        blank=True
+    )
+    
+    # Additional notes
+    additional_notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-request_time']
+        
     def __str__(self):
-        return f"Emergency request from {self.patient.user.get_full_name()} at {self.request_time}"   
+        return f"Emergency request #{self.id} from {self.patient.user.get_full_name()} at {self.request_time}"
+    
+    @property
+    def patient_name(self):
+        """Get patient's full name"""
+        return self.patient.user.get_full_name() or self.patient.user.username
+    
+    @property
+    def clinic_name(self):
+        """Get clinic name"""
+        return self.clinic.name if self.clinic else None
+    
+    @property
+    def approved_by_name(self):
+        """Get approver's name"""
+        return self.approved_by.get_full_name() if self.approved_by else None
+    
+    @property
+    def dispatched_by_name(self):
+        """Get dispatcher's name"""
+        return self.dispatched_by.get_full_name() if self.dispatched_by else None
+    
+    @property
+    def completed_by_name(self):
+        """Get completer's name"""
+        return self.completed_by.get_full_name() if self.completed_by else None
 
-# 🆕 NEW: Combined Disease model with integrated symptoms
+from django.db import models
+from django.contrib.auth.models import User
+from django.utils import timezone
+from django.db.models import Q
+
 class Disease(models.Model):
-    """
-    Combined disease and symptom management for malaria and pneumonia
-    """
     DISEASE_TYPES = [
         ('malaria', 'Malaria'),
         ('pneumonia', 'Pneumonia'),
@@ -436,28 +517,22 @@ class Disease(models.Model):
     # Basic disease info
     name = models.CharField(max_length=100, unique=True)
     disease_type = models.CharField(max_length=20, choices=DISEASE_TYPES)
-    icd_code = models.CharField(max_length=10, blank=True)  # ICD-11 code
+    icd_code = models.CharField(max_length=10, blank=True)
     description = models.TextField(blank=True)
     is_contagious = models.BooleanField(default=False)
     
-    # 🆕 Integrated symptoms as JSON array
-    common_symptoms = models.JSONField(
-        default=list,
-        help_text="Array of common symptoms for this disease"
-    )
+    # Symptoms and scoring
+    common_symptoms = models.JSONField(default=list)
+    symptom_weights = models.JSONField(default=dict)
+    mild_threshold = models.IntegerField(default=20)
+    moderate_threshold = models.IntegerField(default=40)
+    severe_threshold = models.IntegerField(default=70)
+    emergency_threshold = models.IntegerField(default=80)
     
-    # 🆕 Symptom scoring for analysis
-    symptom_weights = models.JSONField(
-        default=dict,
-        help_text="Symptom names mapped to their weight/importance scores"
-    )
+    # Treatment information
+    common_treatments = models.JSONField(default=list)
     
-    # 🆕 Thresholds for recommendations
-    mild_threshold = models.IntegerField(default=20, help_text="Score threshold for mild cases")
-    moderate_threshold = models.IntegerField(default=40, help_text="Score threshold for moderate cases")
-    severe_threshold = models.IntegerField(default=70, help_text="Score threshold for severe cases")
-    emergency_threshold = models.IntegerField(default=80, help_text="Score for immediate hospital visit")
-    
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -470,7 +545,7 @@ class Disease(models.Model):
         """
         total_score = 0
         for symptom in selected_symptoms:
-            weight = self.symptom_weights.get(symptom.lower(), 1)  # Default weight is 1
+            weight = self.symptom_weights.get(symptom.lower(), 1)
             total_score += weight
         return total_score
     
@@ -494,61 +569,50 @@ class Disease(models.Model):
         severity = self.get_severity_level(score)
         
         recommendations = {
-            'mild': 'Monitor symptoms and rest. Consider home remedies. Contact healthcare provider if symptoms worsen.',
-            'moderate': 'Schedule an appointment with a healthcare provider within 24-48 hours.',
-            'severe': 'Seek medical attention promptly. Contact your doctor or visit a clinic today.',
-            'critical': 'Seek immediate emergency medical care. Go to the nearest hospital or call emergency services.'
+            'mild': 'Monitor symptoms and rest. Consider home remedies.',
+            'moderate': 'Schedule appointment within 24-48 hours.',
+            'severe': 'Seek medical attention promptly.',
+            'critical': 'Seek immediate emergency care.'
         }
         
-        return recommendations.get(severity, 'Consult with a healthcare provider.')
+        return recommendations.get(severity, 'Consult healthcare provider.')
     
     @classmethod
     def create_malaria_disease(cls):
-        """
-        Helper method to create malaria disease with predefined symptoms
-        """
         malaria_symptoms = [
             'fever', 'chills', 'headache', 'nausea', 'vomiting', 
             'muscle_aches', 'fatigue', 'sweating', 'abdominal_pain',
             'diarrhea', 'confusion', 'seizures', 'difficulty_breathing'
         ]
         
-        # Higher weights for more serious symptoms
         malaria_weights = {
-            'fever': 10,
-            'chills': 8,
-            'headache': 5,
-            'nausea': 4,
-            'vomiting': 6,
-            'muscle_aches': 3,
-            'fatigue': 4,
-            'sweating': 5,
-            'abdominal_pain': 6,
-            'diarrhea': 5,
-            'confusion': 15,  # High weight - serious symptom
-            'seizures': 20,   # Very high weight - emergency
-            'difficulty_breathing': 18  # High weight - serious
+            'fever': 10, 'chills': 8, 'headache': 5, 'nausea': 4,
+            'vomiting': 6, 'muscle_aches': 3, 'fatigue': 4,
+            'sweating': 5, 'abdominal_pain': 6, 'diarrhea': 5,
+            'confusion': 15, 'seizures': 20, 'difficulty_breathing': 18
         }
         
         return cls.objects.create(
             name='Malaria',
             disease_type='malaria',
             icd_code='1F40',
-            description='A life-threatening disease caused by parasites transmitted through infected mosquito bites.',
+            description='Parasitic disease transmitted by mosquitoes',
             is_contagious=False,
             common_symptoms=malaria_symptoms,
             symptom_weights=malaria_weights,
             mild_threshold=15,
             moderate_threshold=35,
             severe_threshold=60,
-            emergency_threshold=80
+            emergency_threshold=80,
+            common_treatments=[
+                'Antimalarial medications',
+                'Pain relievers',
+                'IV fluids for severe cases'
+            ]
         )
     
     @classmethod
     def create_pneumonia_disease(cls):
-        """
-        Helper method to create pneumonia disease with predefined symptoms
-        """
         pneumonia_symptoms = [
             'cough', 'fever', 'shortness_of_breath', 'chest_pain',
             'fatigue', 'nausea', 'vomiting', 'diarrhea', 'confusion',
@@ -557,157 +621,209 @@ class Disease(models.Model):
         ]
         
         pneumonia_weights = {
-            'cough': 8,
-            'fever': 10,
-            'shortness_of_breath': 15,  # High weight
-            'chest_pain': 12,
-            'fatigue': 4,
-            'nausea': 3,
-            'vomiting': 5,
-            'diarrhea': 4,
-            'confusion': 18,  # High weight - serious
-            'rapid_breathing': 16,  # High weight
-            'sweating': 5,
-            'shaking_chills': 8,
-            'blue_lips_or_fingernails': 25,  # Very high - emergency
-            'severe_chest_pain': 20  # Very high weight
+            'cough': 8, 'fever': 10, 'shortness_of_breath': 15,
+            'chest_pain': 12, 'fatigue': 4, 'nausea': 3,
+            'vomiting': 5, 'diarrhea': 4, 'confusion': 18,
+            'rapid_breathing': 16, 'sweating': 5, 'shaking_chills': 8,
+            'blue_lips_or_fingernails': 25, 'severe_chest_pain': 20
         }
         
         return cls.objects.create(
             name='Pneumonia',
             disease_type='pneumonia',
             icd_code='J18.9',
-            description='Infection that inflames air sacs in one or both lungs.',
+            description='Lung infection inflaming air sacs',
             is_contagious=True,
             common_symptoms=pneumonia_symptoms,
             symptom_weights=pneumonia_weights,
             mild_threshold=20,
             moderate_threshold=40,
             severe_threshold=65,
-            emergency_threshold=85
+            emergency_threshold=85,
+            common_treatments=[
+                'Antibiotics for bacterial',
+                'Antivirals for viral',
+                'Oxygen therapy for severe'
+            ]
         )
 
-# 🆕 NEW: Enhanced symptom checker session
 class SymptomCheckerSession(models.Model):
     """
-    Enhanced symptom assessment session with analysis capabilities
+    Tracks symptom checking sessions and analysis results
     """
-    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='symptom_sessions'
+    )
     session_id = models.CharField(max_length=100, unique=True)
     
-    # 🆕 Selected symptoms as JSON array (allows custom symptoms)
-    selected_symptoms = models.JSONField(
-        default=list,
-        help_text="Array of selected symptoms (predefined + custom)"
-    )
-    
-    # 🆕 Custom symptoms added by user
-    custom_symptoms = models.JSONField(
-        default=list,
-        help_text="Array of custom symptoms not in predefined list"
-    )
+    # Symptoms data
+    selected_symptoms = models.JSONField(default=list)
+    custom_symptoms = models.JSONField(default=list)
     
     # Analysis results
-    analyzed_diseases = models.ManyToManyField(Disease, through='DiseaseAnalysis')
+    analyzed_diseases = models.ManyToManyField(
+        Disease,
+        through='DiseaseAnalysis',
+        related_name='analysis_sessions'
+    )
     primary_suspected_disease = models.ForeignKey(
-        Disease, 
-        on_delete=models.SET_NULL, 
-        null=True, 
+        Disease,
+        on_delete=models.SET_NULL,
+        null=True,
         blank=True,
-        related_name='primary_suspicions'
+        related_name='primary_suspected_in'
     )
     
-    # Overall assessment
+    # Assessment
     overall_risk_score = models.IntegerField(default=0)
-    severity_level = models.CharField(max_length=20, blank=True)  # mild, moderate, severe, critical
+    severity_level = models.CharField(
+        max_length=20,
+        choices=Disease.SEVERITY_LEVELS,
+        blank=True
+    )
     recommendation = models.TextField(blank=True)
     
-    # Additional info
+    # Patient context
     location = models.CharField(max_length=100, blank=True)
-    age_range = models.CharField(max_length=20, blank=True)  # "20-30", "30-40", etc.
-    gender = models.CharField(max_length=1, blank=True)
+    age_range = models.CharField(max_length=20, blank=True)
+    gender = models.CharField(max_length=20, blank=True)
+    temperature = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    heart_rate = models.IntegerField(null=True, blank=True)
     
-    # Follow-up tracking
+    # Follow-up
     needs_followup = models.BooleanField(default=False)
     followup_date = models.DateTimeField(null=True, blank=True)
     
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Symptom check by {self.user or 'Anonymous'} at {self.created_at}"
-    
+        return f"Symptom check #{self.id} by {self.user or 'Anonymous'}"
+
     def analyze_symptoms(self):
-        """
-        Analyze selected symptoms against all diseases and determine recommendations
-        """
-        all_symptoms = self.selected_symptoms + self.custom_symptoms
-        
+        """Analyze symptoms against all diseases"""
+        all_symptoms = self.get_all_symptoms()
         if not all_symptoms:
             return
         
-        diseases = Disease.objects.all()
         max_score = 0
         primary_disease = None
         
-        # Analyze against each disease
-        for disease in diseases:
+        for disease in Disease.objects.all():
             score = disease.get_symptom_score(all_symptoms)
             
-            # Create or update disease analysis
-            analysis, created = DiseaseAnalysis.objects.get_or_create(
+            DiseaseAnalysis.objects.update_or_create(
                 session=self,
                 disease=disease,
-                defaults={'calculated_score': score}
+                defaults={
+                    'calculated_score': score,
+                    'probability_percentage': self._calculate_probability(score, disease),
+                    'severity_assessment': disease.get_severity_level(score)
+                }
             )
-            if not created:
-                analysis.calculated_score = score
-                analysis.save()
             
-            # Track highest scoring disease
             if score > max_score:
                 max_score = score
                 primary_disease = disease
         
-        # Update session with results
         self.overall_risk_score = max_score
         self.primary_suspected_disease = primary_disease
         
         if primary_disease:
             self.severity_level = primary_disease.get_severity_level(max_score)
             self.recommendation = primary_disease.get_recommendation(max_score)
-            
-            # Set follow-up if needed
-            if self.severity_level in ['severe', 'critical']:
-                self.needs_followup = True
-                if self.severity_level == 'critical':
-                    self.followup_date = timezone.now() + timezone.timedelta(hours=2)
-                else:
-                    self.followup_date = timezone.now() + timezone.timedelta(days=1)
+            self._set_followup()
         
         self.save()
-    
+
+    def _calculate_probability(self, score, disease):
+        """Calculate probability percentage based on score"""
+        if score >= disease.emergency_threshold:
+            return 90.0
+        elif score >= disease.severe_threshold:
+            return 75.0
+        elif score >= disease.moderate_threshold:
+            return 60.0
+        elif score >= disease.mild_threshold:
+            return 40.0
+        return 20.0
+
+    def _set_followup(self):
+        """Set follow-up date based on severity"""
+        if self.severity_level in ['severe', 'critical']:
+            self.needs_followup = True
+            if self.severity_level == 'critical':
+                self.followup_date = timezone.now() + timezone.timedelta(hours=2)
+            else:
+                self.followup_date = timezone.now() + timezone.timedelta(days=1)
+
     def get_all_symptoms(self):
-        """
-        Get combined list of all symptoms (predefined + custom)
-        """
+        """Combine predefined and custom symptoms"""
         return self.selected_symptoms + self.custom_symptoms
-    
+
     def add_custom_symptom(self, symptom):
-        """
-        Add a custom symptom to the session
-        """
+        """Add a custom symptom to the session"""
         if symptom not in self.custom_symptoms:
             self.custom_symptoms.append(symptom)
             self.save()
 
-# 🆕 NEW: Through model for disease analysis results
+    def create_patient_diagnosis(self, patient):
+        """Convert session to a diagnosis record"""
+        if not self.primary_suspected_disease:
+            return None
+            
+        return PatientDiagnosis.objects.create(
+            patient=patient,
+            disease=self.primary_suspected_disease,
+            symptoms={
+                'selected': self.selected_symptoms,
+                'custom': self.custom_symptoms
+            },
+            severity=self.severity_level,
+            status='self_reported',
+            session=self,
+            temperature=self.temperature,
+            heart_rate=self.heart_rate
+        )
+
+    def validate_symptoms(self):
+        """Check for contradictory symptoms"""
+        warnings = []
+        symptoms = {s.lower() for s in self.get_all_symptoms()}
+        
+        if 'fever' in symptoms and 'low_body_temperature' in symptoms:
+            warnings.append("Contradictory fever and low temperature symptoms")
+            
+        if ('cough' in symptoms and 'shortness_of_breath' in symptoms and 
+            'chest_pain' not in symptoms):
+            warnings.append("Consider adding chest pain assessment")
+            
+        return warnings
+
 class DiseaseAnalysis(models.Model):
     """
-    Results of analyzing symptoms against a specific disease
+    Analysis results for a disease in a symptom session
     """
-    session = models.ForeignKey(SymptomCheckerSession, on_delete=models.CASCADE)
-    disease = models.ForeignKey(Disease, on_delete=models.CASCADE)
+    session = models.ForeignKey(
+        SymptomCheckerSession,
+        on_delete=models.CASCADE,
+        related_name='disease_analyses'
+    )
+    disease = models.ForeignKey(
+        Disease,
+        on_delete=models.CASCADE,
+        related_name='session_analyses'
+    )
     calculated_score = models.IntegerField(default=0)
     probability_percentage = models.FloatField(default=0.0)
     severity_assessment = models.CharField(max_length=20, blank=True)
@@ -716,26 +832,237 @@ class DiseaseAnalysis(models.Model):
     
     class Meta:
         unique_together = ['session', 'disease']
+        ordering = ['-calculated_score']
     
     def __str__(self):
-        return f"{self.disease.name}: {self.calculated_score} points ({self.probability_percentage}%)"
+        return f"{self.disease.name} analysis ({self.calculated_score} pts)"
+
+class PatientDiagnosis(models.Model):
+    """
+    Diagnosis record connecting patients to doctors
+    """
+    DIAGNOSIS_STATUS = [
+        ('self_reported', 'Self-Reported'),
+        ('doctor_confirmed', 'Doctor Confirmed'),
+        ('doctor_rejected', 'Doctor Rejected'),
+        ('modified', 'Modified Diagnosis'),
+    ]
     
-    def calculate_probability(self):
-        """
-        Calculate probability percentage based on score vs disease thresholds
-        """
-        if self.calculated_score >= self.disease.emergency_threshold:
-            self.probability_percentage = 90.0
-        elif self.calculated_score >= self.disease.severe_threshold:
-            self.probability_percentage = 75.0
-        elif self.calculated_score >= self.disease.moderate_threshold:
-            self.probability_percentage = 60.0
-        elif self.calculated_score >= self.disease.mild_threshold:
-            self.probability_percentage = 40.0
-        else:
-            self.probability_percentage = 20.0
-        
-        self.severity_assessment = self.disease.get_severity_level(self.calculated_score)
+    patient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='patient_diagnoses'
+    )
+    disease = models.ForeignKey(
+        Disease,
+        on_delete=models.PROTECT,
+        related_name='patient_cases'
+    )
+    treating_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='treated_cases'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=DIAGNOSIS_STATUS,
+        default='self_reported'
+    )
+    symptoms = models.JSONField()
+    doctor_notes = models.TextField(blank=True)
+    test_results = models.JSONField(blank=True, null=True)
+    severity = models.CharField(
+        max_length=20,
+        choices=Disease.SEVERITY_LEVELS,
+        blank=True
+    )
+    session = models.ForeignKey(
+        SymptomCheckerSession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resulting_diagnoses'
+    )
+    
+    # Vital signs
+    temperature = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    heart_rate = models.IntegerField(null=True, blank=True)
+    blood_pressure = models.CharField(max_length=20, blank=True)
+    oxygen_saturation = models.IntegerField(null=True, blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='confirmed_diagnoses'
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name_plural = 'Patient Diagnoses'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.patient}'s {self.disease} diagnosis ({self.status})"
+
+    def confirm_diagnosis(self, doctor, notes="", test_results=None):
+        """Doctor confirms this diagnosis"""
+        self.status = 'doctor_confirmed'
+        self.treating_doctor = doctor
+        self.doctor_notes = notes
+        self.test_results = test_results or {}
+        self.confirmed_by = doctor
+        self.confirmed_at = timezone.now()
+        self.save()
+        self._ensure_treatment_plan(doctor)
+
+    def reject_diagnosis(self, doctor, notes=""):
+        """Doctor rejects this diagnosis"""
+        self.status = 'doctor_rejected'
+        self.doctor_notes = notes
+        self.confirmed_by = doctor
+        self.confirmed_at = timezone.now()
+        self.save()
+
+    def _ensure_treatment_plan(self, doctor):
+        """Create treatment plan if none exists"""
+        if not hasattr(self, 'treatment_plan'):
+            TreatmentPlan.objects.create(
+                diagnosis=self,
+                supervising_doctor=doctor,
+                created_by=doctor,
+                medications=[],
+                procedures=[],
+                duration='7 days',
+                follow_up_required=self.severity in ['moderate', 'severe', 'critical'],
+                follow_up_interval=7 if self.severity in ['moderate', 'severe'] else 3
+            )
+
+    def get_treatment_plan(self):
+        """Get or create associated treatment plan"""
+        if hasattr(self, 'treatment_plan'):
+            return self.treatment_plan
+        return None
+
+class MedicalTest(models.Model):
+    """
+    Standard medical tests that can be ordered
+    """
+    TEST_TYPES = [
+        ('blood', 'Blood Test'),
+        ('imaging', 'Imaging'),
+        ('physical', 'Physical Exam'),
+        ('other', 'Other'),
+    ]
+    
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    test_type = models.CharField(max_length=20, choices=TEST_TYPES)
+    typical_values = models.JSONField()
+    disease_specific = models.ManyToManyField(
+        Disease,
+        blank=True,
+        related_name='related_tests'
+    )
+    
+    def __str__(self):
+        return self.name
+
+class PatientTestResult(models.Model):
+    """
+    Results of medical tests performed on patients
+    """
+    diagnosis = models.ForeignKey(
+        PatientDiagnosis,
+        on_delete=models.CASCADE,
+        related_name='test_result_records'
+    )
+    test = models.ForeignKey(
+        MedicalTest,
+        on_delete=models.PROTECT,
+        related_name='patient_results'
+    )
+    result = models.JSONField()
+    notes = models.TextField(blank=True)
+    performed_at = models.DateTimeField(default=timezone.now)
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='ordered_tests'
+    )
+    
+    class Meta:
+        ordering = ['-performed_at']
+    
+    def __str__(self):
+        return f"{self.test} result for {self.diagnosis.patient}"
+
+class TreatmentPlan(models.Model):
+    """
+    Treatment plan for a confirmed diagnosis
+    """
+    diagnosis = models.OneToOneField(
+        PatientDiagnosis,
+        on_delete=models.CASCADE,
+        related_name='treatment_plan'
+    )
+    supervising_doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='supervised_treatments'
+    )
+    medications = models.JSONField(default=list)
+    procedures = models.JSONField(default=list)
+    duration = models.CharField(max_length=100)
+    follow_up_required = models.BooleanField(default=False)
+    follow_up_interval = models.IntegerField()
+    instructions = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='created_treatments'
+    )
+    
+    def __str__(self):
+        return f"Treatment for {self.diagnosis}"
+
+    def add_medication(self, name, dosage, frequency):
+        """Add medication to the plan"""
+        self.medications.append({
+            'name': name,
+            'dosage': dosage,
+            'frequency': frequency,
+            'added_at': timezone.now().isoformat()
+        })
+        self.save()
+
+    def add_procedure(self, name, description, scheduled_date):
+        """Add procedure to the plan"""
+        self.procedures.append({
+            'name': name,
+            'description': description,
+            'scheduled_date': scheduled_date.isoformat(),
+            'added_at': timezone.now().isoformat()
+        })
+        self.save()
+
+    def mark_completed(self):
+        """Mark treatment as completed"""
+        self.duration = "Completed"
         self.save()
 
 # 🆕 NEW: Prevention tips linked to diseases
@@ -791,21 +1118,20 @@ class ScreeningAlert(models.Model):
 
 class HealthcareWorkerAlert(models.Model):
     """
-    Delivers alerts to staff members
+    Alerts for healthcare workers
     """
-    alert = models.ForeignKey(ScreeningAlert, on_delete=models.CASCADE)
-    recipient = models.ForeignKey(User, on_delete=models.CASCADE, limit_choices_to={'role__name__in': ['Doctor', 'Nurse', 'HealthOfficer']})
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='alerts_received'
+    )
     message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
-    sent_at = models.DateTimeField(auto_now_add=True)
-    read_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ['-sent_at']
 
     def __str__(self):
-        return f"Alert #{self.id} to {self.recipient.email}"
-           
+        return f"Alert for {self.recipient}"
+
 class MedicalRecord(models.Model):
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
     date = models.DateTimeField()

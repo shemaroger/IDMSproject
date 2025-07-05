@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import *
 from django.db import transaction
 import uuid
-
+from django.contrib.auth import get_user_model
+User = get_user_model()
 # ======================== AUTHENTICATION SERIALIZERS ========================
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -622,99 +623,7 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
         
         return value
 
-class DiseaseSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Disease model with symptom management
-    """
-    prevention_tips = serializers.SerializerMethodField()
-    total_symptoms = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = Disease
-        fields = [
-            'id', 'name', 'disease_type', 'icd_code', 'description', 
-            'is_contagious', 'common_symptoms', 'symptom_weights',
-            'mild_threshold', 'moderate_threshold', 'severe_threshold',
-            'emergency_threshold', 'prevention_tips', 'total_symptoms',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['created_at', 'updated_at']
-    
-    def get_prevention_tips(self, obj):
-        """Get prevention tips for this disease"""
-        tips = obj.prevention_tips.all()[:5]  # Limit to 5 most important tips
-        return PreventionTipSerializer(tips, many=True).data
-    
-    def get_total_symptoms(self, obj):
-        """Get total number of symptoms for this disease"""
-        return len(obj.common_symptoms) if obj.common_symptoms else 0
-    
-    def validate_common_symptoms(self, value):
-        """Validate that common_symptoms is a list"""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Common symptoms must be a list")
-        return value
-    
-    def validate_symptom_weights(self, value):
-        """Validate that symptom_weights is a dictionary"""
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("Symptom weights must be a dictionary")
-        return value
-    
-    def validate(self, data):
-        """Validate threshold values are in correct order"""
-        mild = data.get('mild_threshold', 0)
-        moderate = data.get('moderate_threshold', 0)
-        severe = data.get('severe_threshold', 0)
-        emergency = data.get('emergency_threshold', 0)
-        
-        if not (mild <= moderate <= severe <= emergency):
-            raise serializers.ValidationError(
-                "Thresholds must be in ascending order: mild <= moderate <= severe <= emergency"
-            )
-        
-        return data
 
-class DiseaseCreateSerializer(serializers.ModelSerializer):
-    """
-    Simplified serializer for creating diseases with helper methods
-    """
-    use_malaria_template = serializers.BooleanField(write_only=True, required=False, default=False)
-    use_pneumonia_template = serializers.BooleanField(write_only=True, required=False, default=False)
-    
-    class Meta:
-        model = Disease
-        fields = [
-            'name', 'disease_type', 'icd_code', 'description', 'is_contagious',
-            'use_malaria_template', 'use_pneumonia_template'
-        ]
-    
-    def create(self, validated_data):
-        use_malaria = validated_data.pop('use_malaria_template', False)
-        use_pneumonia = validated_data.pop('use_pneumonia_template', False)
-        
-        if use_malaria:
-            return Disease.create_malaria_disease()
-        elif use_pneumonia:
-            return Disease.create_pneumonia_disease()
-        else:
-            return super().create(validated_data)
-
-class DiseaseAnalysisSerializer(serializers.ModelSerializer):
-    """
-    Serializer for DiseaseAnalysis results
-    """
-    disease_name = serializers.CharField(source='disease.name', read_only=True)
-    disease_type = serializers.CharField(source='disease.disease_type', read_only=True)
-    
-    class Meta:
-        model = DiseaseAnalysis
-        fields = [
-            'id', 'disease', 'disease_name', 'disease_type', 
-            'calculated_score', 'probability_percentage', 
-            'severity_assessment', 'created_at'
-        ]
-        read_only_fields = ['created_at']
 
 class PreventionTipSerializer(serializers.ModelSerializer):
     """
@@ -730,115 +639,6 @@ class PreventionTipSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at']
 
-class SymptomCheckerSessionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for SymptomCheckerSession with analysis capabilities
-    """
-    analyzed_diseases = DiseaseAnalysisSerializer(
-        source='diseaseanalysis_set', 
-        many=True, 
-        read_only=True
-    )
-    primary_disease_name = serializers.CharField(
-        source='primary_suspected_disease.name', 
-        read_only=True
-    )
-    user_name = serializers.CharField(
-        source='user.get_full_name', 
-        read_only=True
-    )
-    all_symptoms = serializers.SerializerMethodField()
-    analysis_summary = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = SymptomCheckerSession
-        fields = [
-            'id', 'session_id', 'user', 'user_name', 'selected_symptoms', 
-            'custom_symptoms', 'all_symptoms', 'analyzed_diseases',
-            'primary_suspected_disease', 'primary_disease_name',
-            'overall_risk_score', 'severity_level', 'recommendation',
-            'location', 'age_range', 'gender', 'needs_followup',
-            'followup_date', 'analysis_summary', 'created_at', 'updated_at'
-        ]
-        read_only_fields = [
-            'session_id', 'analyzed_diseases', 'primary_suspected_disease',
-            'overall_risk_score', 'severity_level', 'recommendation',
-            'needs_followup', 'followup_date', 'created_at', 'updated_at'
-        ]
-    
-    def get_all_symptoms(self, obj):
-        """Get combined list of all symptoms"""
-        return obj.get_all_symptoms()
-    
-    def get_analysis_summary(self, obj):
-        """Get summary of analysis results"""
-        return {
-            'total_symptoms': len(obj.get_all_symptoms()),
-            'risk_level': obj.severity_level,
-            'primary_disease': obj.primary_suspected_disease.name if obj.primary_suspected_disease else None,
-            'needs_immediate_care': obj.severity_level in ['severe', 'critical'],
-            'analysis_completed': bool(obj.overall_risk_score > 0)
-        }
-    
-    def validate_selected_symptoms(self, value):
-        """Validate selected symptoms"""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Selected symptoms must be a list")
-        return value
-    
-    def validate_custom_symptoms(self, value):
-        """Validate custom symptoms"""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Custom symptoms must be a list")
-        return value
-    
-    def create(self, validated_data):
-        """Create session with auto-generated session_id"""
-        if 'session_id' not in validated_data:
-            validated_data['session_id'] = str(uuid.uuid4())
-        return super().create(validated_data)
-
-class SymptomAnalysisRequestSerializer(serializers.Serializer):
-    """
-    Serializer for symptom analysis requests
-    """
-    selected_symptoms = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        help_text="List of selected symptoms"
-    )
-    custom_symptoms = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        required=False,
-        default=list,
-        help_text="List of custom symptoms not in predefined list"
-    )
-    location = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    age_range = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    gender = serializers.CharField(max_length=1, required=False, allow_blank=True)
-    
-    def validate_selected_symptoms(self, value):
-        """Validate that at least one symptom is selected"""
-        if not value:
-            raise serializers.ValidationError("At least one symptom must be selected")
-        return value
-
-class SymptomAnalysisResponseSerializer(serializers.Serializer):
-    """
-    Serializer for symptom analysis responses
-    """
-    session_id = serializers.CharField()
-    overall_risk_score = serializers.IntegerField()
-    severity_level = serializers.CharField()
-    recommendation = serializers.CharField()
-    primary_suspected_disease = serializers.CharField()
-    disease_analyses = DiseaseAnalysisSerializer(many=True)
-    needs_followup = serializers.BooleanField()
-    followup_date = serializers.DateTimeField(allow_null=True)
-    
-    # Additional helpful info
-    emergency_recommended = serializers.BooleanField()
-    nearest_clinic_recommended = serializers.BooleanField()
-    prevention_tips = PreventionTipSerializer(many=True)
 
 class EmergencyAmbulanceRequestSerializer(serializers.ModelSerializer):
     """
@@ -872,54 +672,31 @@ class EmergencyAmbulanceRequestSerializer(serializers.ModelSerializer):
                 pass
         return None
 
-# Bulk operation serializers
-class BulkDiseaseCreateSerializer(serializers.Serializer):
-    """
-    Serializer for bulk disease creation
-    """
-    create_defaults = serializers.BooleanField(default=True, help_text="Create default malaria and pneumonia diseases")
-    additional_diseases = serializers.ListField(
-        child=DiseaseCreateSerializer(),
-        required=False,
-        default=list,
-        help_text="Additional diseases to create"
-    )
 
-class SymptomCheckerStatsSerializer(serializers.Serializer):
-    """
-    Serializer for symptom checker statistics
-    """
-    total_sessions = serializers.IntegerField()
-    sessions_by_severity = serializers.DictField()
-    most_common_symptoms = serializers.ListField()
-    disease_distribution = serializers.DictField()
-    emergency_cases_today = serializers.IntegerField()
-    followup_needed = serializers.IntegerField()
-
-# ======================== ALERT SYSTEM SERIALIZERS ========================
-class ScreeningAlertSerializer(serializers.ModelSerializer):
-    disease = DiseaseSerializer(read_only=True)
+# # ======================== ALERT SYSTEM SERIALIZERS ========================
+# class ScreeningAlertSerializer(serializers.ModelSerializer):
+#     disease = DiseaseSerializer(read_only=True)
     
-    class Meta:
-        model = ScreeningAlert
-        fields = '__all__'
-        read_only_fields = ['created_at']
+#     class Meta:
+#         model = ScreeningAlert
+#         fields = '__all__'
+#         read_only_fields = ['created_at']
 
-class HealthcareWorkerAlertSerializer(serializers.ModelSerializer):
-    alert = ScreeningAlertSerializer(read_only=True)
-    recipient = UserSerializer(read_only=True)
+# class HealthcareWorkerAlertSerializer(serializers.ModelSerializer):
+#     alert = ScreeningAlertSerializer(read_only=True)
+#     recipient = UserSerializer(read_only=True)
     
-    class Meta:
-        model = HealthcareWorkerAlert
-        fields = '__all__'
-        read_only_fields = ['sent_at', 'read_at']
+#     class Meta:
+#         model = HealthcareWorkerAlert
+#         fields = '__all__'
+#         read_only_fields = ['sent_at', 'read_at']
 
 
-class MedicalRecordSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MedicalRecord
-        fields = '__all__'
-        read_only_fields = ['date', 'is_archived']
+# class MedicalRecordSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = MedicalRecord
+#         fields = '__all__'
+#         read_only_fields = ['date', 'is_archived']
 
 
 
@@ -950,18 +727,18 @@ class EmergencyRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError("Patient not found")
         return value
 
-# ======================== RESPONSE SERIALIZERS ========================
-class RiskAssessmentResponseSerializer(serializers.Serializer):
-    risk_score = serializers.IntegerField(min_value=0, max_value=100)
-    recommendation = serializers.CharField()
-    possible_diseases = DiseaseSerializer(many=True)
-    suggested_actions = serializers.ListField(child=serializers.CharField())
+# # ======================== RESPONSE SERIALIZERS ========================
+# class RiskAssessmentResponseSerializer(serializers.Serializer):
+#     risk_score = serializers.IntegerField(min_value=0, max_value=100)
+#     recommendation = serializers.CharField()
+#     possible_diseases = DiseaseSerializer(many=True)
+#     suggested_actions = serializers.ListField(child=serializers.CharField())
 
-class OutbreakAlertResponseSerializer(serializers.Serializer):
-    location = serializers.CharField()
-    case_count = serializers.IntegerField()
-    severity = serializers.CharField()
-    recommended_interventions = serializers.ListField(child=serializers.CharField())
+# class OutbreakAlertResponseSerializer(serializers.Serializer):
+#     location = serializers.CharField()
+#     case_count = serializers.IntegerField()
+#     severity = serializers.CharField()
+#     recommended_interventions = serializers.ListField(child=serializers.CharField())
 
 
 # ======================== MEDICAL HISTORY SERIALIZER ========================
@@ -971,80 +748,194 @@ class AppointmentSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = '__all__'
 
-class MedicalHistorySerializer(serializers.ModelSerializer):
-    """Serializes complete medical history for a patient"""
-    patient = PatientSerializer(read_only=True)
-    appointment = AppointmentSerializer(read_only=True)
-    emergency_request = EmergencyAmbulanceRequestSerializer(read_only=True)
-    related_diseases = DiseaseSerializer(many=True, read_only=True)
+# class MedicalHistorySerializer(serializers.ModelSerializer):
+#     """Serializes complete medical history for a patient"""
+#     patient = PatientSerializer(read_only=True)
+#     appointment = AppointmentSerializer(read_only=True)
+#     emergency_request = EmergencyAmbulanceRequestSerializer(read_only=True)
+#     related_diseases = DiseaseSerializer(many=True, read_only=True)
     
-    class Meta:
-        model = MedicalRecord
-        fields = [
-            'id',
-            'patient',
-            'date',
-            'diagnosis',
-            'treatment_summary',
-            'appointment',
-            'emergency_request',
-            'related_diseases',
-            'is_archived',
-            'created_at'
-        ]
-        read_only_fields = ['created_at', 'is_archived']
+#     class Meta:
+#         model = MedicalRecord
+#         fields = [
+#             'id',
+#             'patient',
+#             'date',
+#             'diagnosis',
+#             'treatment_summary',
+#             'appointment',
+#             'emergency_request',
+#             'related_diseases',
+#             'is_archived',
+#             'created_at'
+#         ]
+#         read_only_fields = ['created_at', 'is_archived']
 
-    def to_representation(self, instance):
-        """Custom representation to include additional data"""
-        representation = super().to_representation(instance)
+#     def to_representation(self, instance):
+#         """Custom representation to include additional data"""
+#         representation = super().to_representation(instance)
         
-        # Add related prescriptions if they exist
-        if hasattr(instance, 'prescriptions'):
-            representation['prescriptions'] = instance.prescriptions.values(
-                'id', 'name', 'dosage', 'frequency'
-            )
+#         # Add related prescriptions if they exist
+#         if hasattr(instance, 'prescriptions'):
+#             representation['prescriptions'] = instance.prescriptions.values(
+#                 'id', 'name', 'dosage', 'frequency'
+#             )
         
-        # Add symptom checker session if linked
-        if hasattr(instance, 'symptom_check_session'):
-            representation['symptoms'] = instance.symptom_check_session.symptoms_selected.values(
-                'id', 'name', 'severity_score'
-            )
+#         # Add symptom checker session if linked
+#         if hasattr(instance, 'symptom_check_session'):
+#             representation['symptoms'] = instance.symptom_check_session.symptoms_selected.values(
+#                 'id', 'name', 'severity_score'
+#             )
         
-        return representation
+#         return representation
 
 # ======================== MEDICAL TIMELINE SERIALIZER ========================
-class MedicalTimelineSerializer(serializers.Serializer):
-    """Serializes medical events in timeline format"""
-    date = serializers.DateTimeField()
-    event_type = serializers.CharField()
-    title = serializers.CharField()
-    description = serializers.CharField()
-    related_object = serializers.DictField()
+# class MedicalTimelineSerializer(serializers.Serializer):
+#     """Serializes medical events in timeline format"""
+#     date = serializers.DateTimeField()
+#     event_type = serializers.CharField()
+#     title = serializers.CharField()
+#     description = serializers.CharField()
+#     related_object = serializers.DictField()
     
-    def to_representation(self, instance):
-        """Creates unified timeline from different medical records"""
-        if isinstance(instance, MedicalRecord):
-            return {
-                'date': instance.date,
-                'event_type': 'medical_record',
-                'title': f"Medical Record - {instance.date.strftime('%Y-%m-%d')}",
-                'description': instance.diagnosis[:100] + '...' if instance.diagnosis else '',
-                'related_object': MedicalHistorySerializer(instance).data
-            }
-        elif isinstance(instance, Appointment):
-            return {
-                'date': instance.appointment_date,
-                'event_type': 'appointment',
-                'title': f"Appointment with Dr. {instance.healthcare_provider.last_name}",
-                'description': instance.reason[:100] + '...' if instance.reason else '',
-                'related_object': AppointmentSerializer(instance).data
-            }
-        elif isinstance(instance, EmergencyAmbulanceRequest):
-            return {
-                'date': instance.request_time,
-                'event_type': 'emergency',
-                'title': "Emergency Request",
-                'description': instance.condition_description[:100] + '...',
-                'related_object': EmergencyAmbulanceRequestSerializer(instance).data
-            }
-        return super().to_representation(instance)    
+#     def to_representation(self, instance):
+#         """Creates unified timeline from different medical records"""
+#         if isinstance(instance, MedicalRecord):
+#             return {
+#                 'date': instance.date,
+#                 'event_type': 'medical_record',
+#                 'title': f"Medical Record - {instance.date.strftime('%Y-%m-%d')}",
+#                 'description': instance.diagnosis[:100] + '...' if instance.diagnosis else '',
+#                 'related_object': MedicalHistorySerializer(instance).data
+#             }
+#         elif isinstance(instance, Appointment):
+#             return {
+#                 'date': instance.appointment_date,
+#                 'event_type': 'appointment',
+#                 'title': f"Appointment with Dr. {instance.healthcare_provider.last_name}",
+#                 'description': instance.reason[:100] + '...' if instance.reason else '',
+#                 'related_object': AppointmentSerializer(instance).data
+#             }
+#         elif isinstance(instance, EmergencyAmbulanceRequest):
+#             return {
+#                 'date': instance.request_time,
+#                 'event_type': 'emergency',
+#                 'title': "Emergency Request",
+#                 'description': instance.condition_description[:100] + '...',
+#                 'related_object': EmergencyAmbulanceRequestSerializer(instance).data
+#             }
+#         return super().to_representation(instance)    
+
+
+class DiseaseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Disease
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+class SymptomCheckerSessionSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    all_symptoms = serializers.SerializerMethodField()
+    warnings = serializers.SerializerMethodField()
+    disease_analyses = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SymptomCheckerSession
+        fields = '__all__'
+        read_only_fields = (
+            'session_id', 'created_at', 'updated_at',
+            'primary_suspected_disease', 'overall_risk_score',
+            'severity_level', 'recommendation', 'needs_followup',
+            'followup_date', 'analyzed_diseases', 'disease_analyses'
+        )
+
+    def get_all_symptoms(self, obj):
+        return obj.get_all_symptoms()
+
+    def get_warnings(self, obj):
+        return obj.validate_symptoms()
+
+    def get_disease_analyses(self, obj):
+        return DiseaseAnalysisSerializer(
+            obj.disease_analyses.all().order_by('-calculated_score'),
+            many=True
+        ).data
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        instance.analyze_symptoms()
+        return instance
+
+class DiseaseAnalysisSerializer(serializers.ModelSerializer):
+    disease = DiseaseSerializer(read_only=True)
+    
+    class Meta:
+        model = DiseaseAnalysis
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+class MedicalTestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalTest
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+class PatientTestResultSerializer(serializers.ModelSerializer):
+    test = MedicalTestSerializer(read_only=True)
+    performed_by = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = PatientTestResult
+        fields = '__all__'
+        read_only_fields = ('performed_at',)
+
+class TreatmentPlanSerializer(serializers.ModelSerializer):
+    supervising_doctor = UserSerializer(read_only=True)
+    created_by = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = TreatmentPlan
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+class PatientDiagnosisSerializer(serializers.ModelSerializer):
+    patient = UserSerializer(read_only=True)
+    disease = DiseaseSerializer(read_only=True)
+    treating_doctor = UserSerializer(read_only=True)
+    confirmed_by = UserSerializer(read_only=True)
+    session = SymptomCheckerSessionSerializer(read_only=True)
+    test_results = serializers.SerializerMethodField()
+    treatment_plan = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PatientDiagnosis
+        fields = '__all__'
+        read_only_fields = (
+            'created_at', 'updated_at', 'confirmed_at',
+            'confirmed_by', 'treatment_plan'
+        )
+
+    def get_test_results(self, obj):
+        return PatientTestResultSerializer(
+            obj.test_results.all().order_by('-performed_at'),
+            many=True
+        ).data
+
+    def get_treatment_plan(self, obj):
+        if hasattr(obj, 'treatment_plan'):
+            return TreatmentPlanSerializer(obj.treatment_plan).data
+        return None
+
+class DoctorAssignmentSerializer(serializers.Serializer):
+    doctor_id = serializers.PrimaryKeyRelatedField(
+        queryset=get_user_model().objects.filter(groups__name='Doctors')
+    )
+
+class DiagnosisConfirmationSerializer(serializers.Serializer):
+    notes = serializers.CharField(required=False, allow_blank=True)
+    test_results = serializers.JSONField(required=False)
+
+class MedicationSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    dosage = serializers.CharField()
+    frequency = serializers.CharField()
