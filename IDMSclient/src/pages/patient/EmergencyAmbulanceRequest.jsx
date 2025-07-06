@@ -1,17 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { healthcareAPI, authAPI } from '../../services/api';
-import api from '../../services/api';
-import { 
-  Plus, 
-  Clock, 
-  MapPin, 
-  AlertTriangle, 
-  Phone, 
-  CheckCircle, 
-  Navigation, 
-  Eye, 
-  X, 
+import {
+  Plus,
+  Clock,
+  MapPin,
+  AlertTriangle,
+  Phone,
+  CheckCircle,
+  Navigation,
+  Eye,
+  X,
   RefreshCw,
   Calendar,
   User,
@@ -37,14 +36,12 @@ const PatientEmergencyPage = () => {
   const [sortConfig, setSortConfig] = useState({ key: 'request_time', direction: 'desc' });
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  
   const [filters, setFilters] = useState({
     status: 'all',
     urgency: 'all',
     approval: 'all',
     search: ''
   });
-
   const [formData, setFormData] = useState({
     clinic: '',
     location: '',
@@ -56,8 +53,17 @@ const PatientEmergencyPage = () => {
   });
 
   useEffect(() => {
-    fetchEmergencyRequests();
-    fetchClinics();
+    const fetchData = async () => {
+      try {
+        await fetchEmergencyRequests();
+        await fetchClinics();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
   }, []);
 
   useEffect(() => {
@@ -67,50 +73,49 @@ const PatientEmergencyPage = () => {
   const fetchClinics = async () => {
     try {
       const response = await healthcareAPI.clinics.list();
-      setClinics(response.data.results || response.data || []);
+      setClinics(response.results || response || []);
     } catch (error) {
       console.error('Error fetching clinics:', error);
+      setError(error.message);
     }
   };
 
   const fetchEmergencyRequests = async () => {
     try {
-      setError('');
-      let response;
-      try {
-        response = await api.get('/emergency-requests/');
-      } catch (err) {
-        response = await api.get('/emergency-ambulance-requests/');
+      const currentUser = authAPI.getCurrentUser();
+      let patientId = currentUser?.patient_id || currentUser?.id;
+      
+      if (!patientId) {
+        throw new Error('Patient profile not found');
       }
-      setEmergencyRequests(response.data.results || response.data || []);
+  
+      const response = await healthcareAPI.emergencies.list({ patient: patientId });
+      
+      // Handle both array and paginated responses
+      const requests = Array.isArray(response) ? 
+        response : 
+        (response.results || response.data || []);
+      
+      setEmergencyRequests(requests);
+      setError(null);
     } catch (error) {
       console.error('Error fetching emergency requests:', error);
-      setError('Unable to load emergency requests. The service may be temporarily unavailable.');
+      setError(error.message || 'Unable to load emergency requests. The service may be temporarily unavailable.');
       setEmergencyRequests([]);
-    } finally {
-      setLoading(false);
     }
   };
 
   const applyFilters = () => {
     let filtered = [...emergencyRequests];
-
-    // Status filter
     if (filters.status !== 'all') {
       filtered = filtered.filter(request => request.status === filters.status);
     }
-
-    // Urgency filter
     if (filters.urgency !== 'all') {
       filtered = filtered.filter(request => request.urgency_level === filters.urgency);
     }
-
-    // Approval filter
     if (filters.approval !== 'all') {
       filtered = filtered.filter(request => request.approval_status === filters.approval);
     }
-
-    // Search filter
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
       filtered = filtered.filter(request =>
@@ -121,7 +126,6 @@ const PatientEmergencyPage = () => {
         request.id.toString().includes(searchTerm)
       );
     }
-
     setFilteredRequests(filtered);
     setCurrentPage(1);
   };
@@ -132,21 +136,17 @@ const PatientEmergencyPage = () => {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
-
     const sorted = [...filteredRequests].sort((a, b) => {
       let aValue = a[key];
       let bValue = b[key];
-
       if (key === 'request_time') {
         aValue = new Date(a.request_time);
         bValue = new Date(b.request_time);
       }
-
       if (aValue < bValue) return direction === 'asc' ? -1 : 1;
       if (aValue > bValue) return direction === 'asc' ? 1 : -1;
       return 0;
     });
-
     setFilteredRequests(sorted);
   };
 
@@ -155,7 +155,6 @@ const PatientEmergencyPage = () => {
       alert('Geolocation is not supported by this browser');
       return;
     }
-
     setGettingLocation(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -184,13 +183,10 @@ const PatientEmergencyPage = () => {
       alert('Please fill in location and medical condition fields');
       return;
     }
-    
     setCreating(true);
-    
     try {
       const currentUser = authAPI.getCurrentUser();
       let patientId = currentUser?.patient_id || currentUser?.id;
-      
       const requestData = {
         patient: patientId,
         location: formData.location.trim(),
@@ -201,13 +197,7 @@ const PatientEmergencyPage = () => {
         ...(formData.clinic && { clinic: parseInt(formData.clinic) }),
         ...(formData.gps_coordinates && { gps_coordinates: formData.gps_coordinates.trim() })
       };
-      
-      try {
-        await api.post('/emergency-requests/', requestData);
-      } catch (err) {
-        await api.post('/emergency-ambulance-requests/', requestData);
-      }
-      
+      await healthcareAPI.emergencies.create(requestData);
       setShowCreateForm(false);
       setFormData({
         clinic: '',
@@ -218,12 +208,11 @@ const PatientEmergencyPage = () => {
         urgency_level: 'standard',
         additional_notes: ''
       });
-      fetchEmergencyRequests();
+      await fetchEmergencyRequests();
       alert('Emergency request submitted successfully!');
-      
     } catch (error) {
       console.error('Error submitting emergency request:', error);
-      alert('Failed to submit emergency request. Please try again or call 911 directly.');
+      alert(error.message || 'Failed to submit emergency request. Please try again or call 911 directly.');
     } finally {
       setCreating(false);
     }
@@ -238,7 +227,6 @@ const PatientEmergencyPage = () => {
     if (approvalStatus === 'rejected') {
       return <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full border border-red-200">Rejected</span>;
     }
-    
     const statusMap = {
       'P': { text: 'Pending Review', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
       'D': { text: 'Dispatched', color: 'bg-blue-100 text-blue-800 border-blue-200' },
@@ -246,9 +234,7 @@ const PatientEmergencyPage = () => {
       'T': { text: 'In Transit', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
       'C': { text: 'Completed', color: 'bg-green-100 text-green-800 border-green-200' }
     };
-    
     const statusInfo = statusMap[status] || { text: 'Unknown', color: 'bg-gray-100 text-gray-800 border-gray-200' };
-    
     return (
       <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${statusInfo.color}`}>
         {statusInfo.text}
@@ -263,9 +249,7 @@ const PatientEmergencyPage = () => {
       'standard': { text: 'STANDARD', color: 'bg-blue-100 text-blue-800 border-blue-200' },
       'non_urgent': { text: 'LOW', color: 'bg-green-100 text-green-800 border-green-200' }
     };
-    
     const urgencyInfo = urgencyMap[urgency] || urgencyMap['standard'];
-    
     return (
       <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${urgencyInfo.color}`}>
         {urgencyInfo.text}
@@ -278,20 +262,11 @@ const PatientEmergencyPage = () => {
     const pending = emergencyRequests.filter(r => r.approval_status === 'pending').length;
     const active = emergencyRequests.filter(r => ['D', 'A', 'T'].includes(r.status)).length;
     const completed = emergencyRequests.filter(r => r.status === 'C').length;
-    
     return { total, pending, active, completed };
   };
 
-  // Pagination
-  const totalPages = Math.ceil(filteredRequests.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentRequests = filteredRequests.slice(startIndex, endIndex);
-
-  const stats = getStatistics();
-
   const SortableHeader = ({ column, children, className = "" }) => (
-    <th 
+    <th
       className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 ${className}`}
       onClick={() => handleSort(column)}
     >
@@ -316,6 +291,12 @@ const PatientEmergencyPage = () => {
       </DashboardLayout>
     );
   }
+
+  const stats = getStatistics();
+  const totalPages = Math.ceil(filteredRequests.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentRequests = filteredRequests.slice(startIndex, endIndex);
 
   return (
     <DashboardLayout>
@@ -343,7 +324,6 @@ const PatientEmergencyPage = () => {
             </button>
           </div>
         </div>
-
         {/* Emergency Notice */}
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
@@ -351,7 +331,7 @@ const PatientEmergencyPage = () => {
             <div>
               <h3 className="font-semibold text-red-800">🚨 Life-Threatening Emergency?</h3>
               <p className="text-red-700 text-sm mt-1">
-                If this is a life-threatening emergency, call <strong>911</strong> immediately. 
+                If this is a life-threatening emergency, call <strong>911</strong> immediately.
                 This system is for requesting ambulance services and tracking existing requests.
               </p>
               <button
@@ -364,7 +344,6 @@ const PatientEmergencyPage = () => {
             </div>
           </div>
         </div>
-
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-4 rounded-lg border border-gray-200">
@@ -378,7 +357,6 @@ const PatientEmergencyPage = () => {
               </div>
             </div>
           </div>
-
           <div className="bg-white p-4 rounded-lg border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -390,7 +368,6 @@ const PatientEmergencyPage = () => {
               </div>
             </div>
           </div>
-
           <div className="bg-white p-4 rounded-lg border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -402,7 +379,6 @@ const PatientEmergencyPage = () => {
               </div>
             </div>
           </div>
-
           <div className="bg-white p-4 rounded-lg border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -415,7 +391,6 @@ const PatientEmergencyPage = () => {
             </div>
           </div>
         </div>
-
         {/* Error Message */}
         {error && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -434,14 +409,12 @@ const PatientEmergencyPage = () => {
             </div>
           </div>
         )}
-
         {/* Filters */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex items-center gap-2 mb-4">
             <Filter className="w-5 h-5 text-gray-600" />
             <h3 className="font-medium text-gray-900">Filters</h3>
           </div>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -458,7 +431,6 @@ const PatientEmergencyPage = () => {
                 <option value="C">Completed</option>
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Urgency</label>
               <select
@@ -473,7 +445,6 @@ const PatientEmergencyPage = () => {
                 <option value="non_urgent">Low Priority</option>
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Approval</label>
               <select
@@ -487,7 +458,6 @@ const PatientEmergencyPage = () => {
                 <option value="rejected">Rejected</option>
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Per Page</label>
               <select
@@ -501,7 +471,6 @@ const PatientEmergencyPage = () => {
                 <option value={50}>50 requests</option>
               </select>
             </div>
-
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
               <div className="relative">
@@ -517,7 +486,6 @@ const PatientEmergencyPage = () => {
             </div>
           </div>
         </div>
-
         {/* Table */}
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           {filteredRequests.length === 0 ? (
@@ -527,7 +495,7 @@ const PatientEmergencyPage = () => {
                 {emergencyRequests.length === 0 ? 'No Emergency Requests' : 'No Results Found'}
               </h3>
               <p className="text-gray-600 mb-4">
-                {emergencyRequests.length === 0 
+                {emergencyRequests.length === 0
                   ? "You haven't submitted any emergency ambulance requests yet."
                   : "No requests match your current filters."
                 }
@@ -571,7 +539,6 @@ const PatientEmergencyPage = () => {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">#{request.id}</div>
                         </td>
-                        
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-gray-900">
                             {new Date(request.request_time).toLocaleDateString()}
@@ -580,7 +547,6 @@ const PatientEmergencyPage = () => {
                             {new Date(request.request_time).toLocaleTimeString()}
                           </div>
                         </td>
-                        
                         <td className="px-6 py-4">
                           <div className="text-sm text-gray-900 max-w-xs truncate" title={request.location}>
                             {request.location}
@@ -591,7 +557,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           )}
                         </td>
-                        
                         <td className="px-6 py-4">
                           <div className="text-sm text-gray-900 max-w-xs truncate" title={request.condition_description}>
                             {request.condition_description}
@@ -602,15 +567,12 @@ const PatientEmergencyPage = () => {
                             </div>
                           )}
                         </td>
-                        
                         <td className="px-6 py-4 whitespace-nowrap">
                           {getUrgencyBadge(request.urgency_level)}
                         </td>
-                        
                         <td className="px-6 py-4 whitespace-nowrap">
                           {getStatusBadge(request.status, request.approval_status)}
                         </td>
-                        
                         <td className="px-6 py-4 whitespace-nowrap">
                           {request.assigned_ambulance ? (
                             <div>
@@ -627,7 +589,6 @@ const PatientEmergencyPage = () => {
                             <span className="text-sm text-gray-500">Not assigned</span>
                           )}
                         </td>
-                        
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <button
                             onClick={() => viewRequestDetails(request)}
@@ -642,7 +603,6 @@ const PatientEmergencyPage = () => {
                   </tbody>
                 </table>
               </div>
-
               {/* Pagination */}
               {totalPages > 1 && (
                 <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
@@ -679,7 +639,6 @@ const PatientEmergencyPage = () => {
                         >
                           Previous
                         </button>
-                        
                         {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                           let pageNumber;
                           if (totalPages <= 5) {
@@ -691,7 +650,6 @@ const PatientEmergencyPage = () => {
                           } else {
                             pageNumber = currentPage - 2 + i;
                           }
-                          
                           return (
                             <button
                               key={pageNumber}
@@ -706,7 +664,6 @@ const PatientEmergencyPage = () => {
                             </button>
                           );
                         })}
-                        
                         <button
                           onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                           disabled={currentPage === totalPages}
@@ -722,14 +679,12 @@ const PatientEmergencyPage = () => {
             </>
           )}
         </div>
-
         {/* Create Form Modal */}
         {showCreateForm && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg w-full max-w-2xl max-h-screen overflow-y-auto">
               <div className="p-6">
                 <h2 className="text-xl font-bold mb-4">Request Emergency Ambulance</h2>
-                
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -748,7 +703,6 @@ const PatientEmergencyPage = () => {
                       ))}
                     </select>
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Current Location *
@@ -775,7 +729,6 @@ const PatientEmergencyPage = () => {
                       <p className="text-xs text-green-600 mt-1">GPS: {formData.gps_coordinates}</p>
                     )}
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Medical Condition/Emergency *
@@ -789,7 +742,6 @@ const PatientEmergencyPage = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Suspected Condition (Optional)
@@ -802,7 +754,6 @@ const PatientEmergencyPage = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Urgency Level
@@ -818,7 +769,6 @@ const PatientEmergencyPage = () => {
                       <option value="non_urgent">Non-urgent (Can wait)</option>
                     </select>
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Additional Notes
@@ -831,14 +781,12 @@ const PatientEmergencyPage = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                   </div>
-
                   <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
                     <p className="text-sm text-yellow-800">
-                      <strong>Important:</strong> This request will be reviewed by medical staff before dispatch. 
+                      <strong>Important:</strong> This request will be reviewed by medical staff before dispatch.
                       For immediate life-threatening emergencies, call 911 directly.
                     </p>
                   </div>
-
                   <div className="flex gap-3 pt-4">
                     <button
                       onClick={handleSubmit}
@@ -860,7 +808,6 @@ const PatientEmergencyPage = () => {
             </div>
           </div>
         )}
-
         {/* Detail Modal */}
         {showDetailModal && selectedRequest && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -883,7 +830,6 @@ const PatientEmergencyPage = () => {
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-
                 <div className="grid md:grid-cols-2 gap-8">
                   <div className="space-y-6">
                     <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg border border-blue-200">
@@ -912,7 +858,6 @@ const PatientEmergencyPage = () => {
                         </div>
                       </div>
                     </div>
-
                     <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-lg border border-green-200">
                       <h3 className="flex items-center gap-2 font-semibold text-green-800 mb-4">
                         <MapPin className="w-5 h-5" />
@@ -925,7 +870,6 @@ const PatientEmergencyPage = () => {
                             {selectedRequest.location}
                           </p>
                         </div>
-                        
                         {selectedRequest.gps_coordinates && (
                           <div>
                             <span className="font-medium text-green-700 block mb-2">GPS Coordinates:</span>
@@ -971,7 +915,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-
                         {!selectedRequest.gps_coordinates && (
                           <div>
                             <span className="font-medium text-green-700 block mb-2">Map Search:</span>
@@ -988,7 +931,6 @@ const PatientEmergencyPage = () => {
                             </button>
                           </div>
                         )}
-                        
                         {selectedRequest.clinic_name && (
                           <div>
                             <span className="font-medium text-green-700 block mb-1">Preferred Clinic:</span>
@@ -999,7 +941,6 @@ const PatientEmergencyPage = () => {
                         )}
                       </div>
                     </div>
-
                     <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-lg border border-purple-200">
                       <h3 className="flex items-center gap-2 font-semibold text-purple-800 mb-4">
                         <Activity className="w-5 h-5" />
@@ -1031,7 +972,6 @@ const PatientEmergencyPage = () => {
                       </div>
                     </div>
                   </div>
-
                   <div className="space-y-6">
                     <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-lg border border-gray-200">
                       <h3 className="flex items-center gap-2 font-semibold text-gray-800 mb-4">
@@ -1048,7 +988,6 @@ const PatientEmergencyPage = () => {
                             </p>
                           </div>
                         </div>
-
                         {selectedRequest.approved_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-green-500 rounded-full flex-shrink-0 mt-1"></div>
@@ -1063,7 +1002,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-
                         {selectedRequest.dispatched_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-blue-500 rounded-full flex-shrink-0 mt-1"></div>
@@ -1078,7 +1016,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-
                         {selectedRequest.arrived_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-purple-500 rounded-full flex-shrink-0 mt-1"></div>
@@ -1090,7 +1027,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-
                         {selectedRequest.in_transit_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-indigo-500 rounded-full flex-shrink-0 mt-1"></div>
@@ -1102,7 +1038,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-
                         {selectedRequest.completed_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-green-600 rounded-full flex-shrink-0 mt-1"></div>
@@ -1119,7 +1054,6 @@ const PatientEmergencyPage = () => {
                         )}
                       </div>
                     </div>
-
                     {selectedRequest.assigned_ambulance && (
                       <div className="bg-gradient-to-br from-blue-50 to-indigo-100 p-6 rounded-lg border border-blue-200">
                         <h3 className="flex items-center gap-2 font-semibold text-blue-800 mb-4">
@@ -1155,7 +1089,6 @@ const PatientEmergencyPage = () => {
                         </div>
                       </div>
                     )}
-
                     {selectedRequest.approval_status === 'rejected' && (
                       <div className="bg-gradient-to-br from-red-50 to-red-100 p-6 rounded-lg border border-red-200">
                         <h3 className="flex items-center gap-2 font-semibold text-red-800 mb-4">
@@ -1182,7 +1115,6 @@ const PatientEmergencyPage = () => {
                         </div>
                       </div>
                     )}
-
                     {/* Quick Actions */}
                     <div className="bg-gradient-to-br from-yellow-50 to-orange-100 p-6 rounded-lg border border-yellow-200">
                       <h3 className="flex items-center gap-2 font-semibold text-yellow-800 mb-4">
@@ -1227,7 +1159,6 @@ const PatientEmergencyPage = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="flex justify-end mt-8 pt-6 border-t border-gray-200">
                   <button
                     onClick={() => setShowDetailModal(false)}

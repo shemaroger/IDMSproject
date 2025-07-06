@@ -28,8 +28,8 @@ import {
   Clock,
   MessageSquare
 } from 'lucide-react';
+import logo from '../../assets/healthlink-logo.png'; // Ensure this path is correct
 
-// Define navigation items for each role
 const getNavigationItems = (userRole) => {
   const baseItems = [
     {
@@ -311,10 +311,10 @@ const getNavigationItems = (userRole) => {
         icon: Calendar
       },
       {
-        name: 'Emergency Services',
-        href: '/admin/emergency',
-        icon: AlertTriangle,
-        badge: '5'
+        name: 'Prevention Tips',
+        href: '/admin/prevention-tips',
+        icon: BookOpen,
+        badge: '24',
       },
       {
         name: 'System Alerts',
@@ -356,13 +356,6 @@ const Sidebar = ({ isOpen, onClose }) => {
     return location.pathname === href || location.pathname.startsWith(href + '/');
   };
 
-  const handleNavigation = (href) => {
-    console.log('Navigating to:', href);
-    navigate(href);
-    onClose();
-  };
-
-  // Get role-specific styling
   const getRoleColor = (role) => {
     switch (role) {
       case 'Admin': return 'bg-red-600';
@@ -375,7 +368,6 @@ const Sidebar = ({ isOpen, onClose }) => {
     }
   };
 
-  // Navigation Item Component using Link
   const NavigationItem = ({ item }) => {
     const isActive = isActiveLink(item.href);
     
@@ -401,7 +393,6 @@ const Sidebar = ({ isOpen, onClose }) => {
         
         <span className="flex-1 truncate">{item.name}</span>
         
-        {/* Badge */}
         {item.badge && (
           <span className={`
             inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
@@ -436,12 +427,16 @@ const Sidebar = ({ isOpen, onClose }) => {
         lg:translate-x-0 lg:static lg:inset-0
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        {/* Sidebar Header */}
-        <div className={`flex items-center justify-center h-16 px-4 text-white ${getRoleColor(userRole)}`}>
-          <Heart className="h-8 w-8 mr-3" />
-          <div>
-            <h2 className="text-lg font-semibold">HealthLink</h2>
-            <p className="text-xs opacity-90">{userRole}</p>
+        {/* Enhanced Sidebar Header with prominent logo */}
+        <div className={`flex items-center justify-start h-20 px-4 ${getRoleColor(userRole)}`}>
+          <img 
+            src={logo} 
+            alt="HealthLink Logo" 
+            className="h-16 w-auto mr-6" 
+          />
+          <div className="flex flex-col">
+            <h2 className="text-xl font-bold text-white">HealthLink</h2>
+            <p className="text-sm text-white opacity-90">{userRole}</p>
           </div>
         </div>
 

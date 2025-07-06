@@ -47,19 +47,17 @@ export const authAPI = {
       throw new Error(error.response?.data?.error || 'Login failed');
     }
   },
-
   register: async (userData) => {
     try {
       const response = await api.post('/auth/register/', userData);
       return response.data;
     } catch (error) {
-      const errorMessage = error.response?.data?.error || 
+      const errorMessage = error.response?.data?.error ||
         Object.values(error.response?.data || {}).flat().join(', ') ||
         'Registration failed';
       throw new Error(errorMessage);
     }
   },
-
   logout: async () => {
     try {
       await api.post('/auth/logout/');
@@ -71,16 +69,13 @@ export const authAPI = {
       window.location.href = '/login';
     }
   },
-
   getCurrentUser: () => {
     const user = localStorage.getItem('user');
     return user ? JSON.parse(user) : null;
   },
-
   isAuthenticated: () => !!localStorage.getItem('authToken'),
-
   getProfile: () => api.get('/auth/profile/'),
-  changePassword: (oldPassword, newPassword) => 
+  changePassword: (oldPassword, newPassword) =>
     api.post('/auth/change_password/', { old_password: oldPassword, new_password: newPassword }),
   forgotPassword: (email) => api.post('/auth/forgot_password/', { email }),
 };
@@ -96,7 +91,6 @@ export const healthcareAPI = {
     delete: (id) => api.delete(`/users/${id}/`),
     assignClinics: (userId, clinicIds) => api.post(`/users/${userId}/assign-clinics/`, { clinic_ids: clinicIds }),
   },
-
   // Clinics
   clinics: {
     list: (params) => api.get('/clinics/', { params }),
@@ -108,7 +102,6 @@ export const healthcareAPI = {
     assignStaff: (clinicId, userIds) => api.post(`/clinics/${clinicId}/assign-staff/`, { user_ids: userIds }),
     removeStaff: (clinicId, userIds) => api.post(`/clinics/${clinicId}/remove-staff/`, { user_ids: userIds }),
   },
-
   // Roles
   roles: {
     list: (params) => api.get('/roles/', { params }),
@@ -117,7 +110,6 @@ export const healthcareAPI = {
     update: (id, data) => api.patch(`/roles/${id}/`, data),
     delete: (id) => api.delete(`/roles/${id}/`),
   },
-
   // Patients
   patients: {
     list: (params) => api.get('/patients/', { params }),
@@ -126,59 +118,215 @@ export const healthcareAPI = {
     update: (id, data) => api.patch(`/patients/${id}/`, data),
     delete: (id) => api.delete(`/patients/${id}/`),
   },
-
   // Appointments
-  appointments: {
-    list: (params) => api.get('/appointments/', { params }),
-    get: (id) => api.get(`/appointments/${id}/`),
-    create: (data) => api.post('/appointments/', data),
-    update: (id, data) => api.patch(`/appointments/${id}/`, data),
-    delete: (id) => api.delete(`/appointments/${id}/`),
-    
-    // Appointment actions
-    approve: (id) => api.post(`/appointments/${id}/approve/`),
-    cancel: (id) => api.post(`/appointments/${id}/cancel/`),
-    complete: (id, notes = '') => api.post(`/appointments/${id}/complete/`, { notes }),
-    
-    // Appointment queries
-    myUpcoming: () => api.get('/appointments/my_upcoming/'),
-    stats: () => api.get('/appointments/stats/'),
-    calendarView: (startDate, endDate) => api.get('/appointments/calendar_view/', {
-      params: { start_date: startDate, end_date: endDate }
-    }),
+ // Emergency Requests API - Enhanced version
+emergencies: {
+  // Basic CRUD operations
+  list: async (params) => {
+    try {
+      const response = await api.get('/emergency-requests/', { params });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  get: async (id) => {
+    try {
+      const response = await api.get(`/emergency-requests/${id}/`);
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  create: async (data) => {
+    try {
+      const response = await api.post('/emergency-requests/', data);
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  update: async (id, data) => {
+    try {
+      const response = await api.patch(`/emergency-requests/${id}/`, data);
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  delete: async (id) => {
+    try {
+      const response = await api.delete(`/emergency-requests/${id}/`);
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
   },
 
-  // Emergency Requests
-  emergencies: {
-    list: (params) => api.get('/emergency-requests/', { params }),
-    get: (id) => api.get(`/emergency-requests/${id}/`),
-    create: (data) => api.post('/emergency-requests/', data),
-    update: (id, data) => api.patch(`/emergency-requests/${id}/`, data),
-    delete: (id) => api.delete(`/emergency-requests/${id}/`),
-    
-    // Emergency actions
-    approve: (id, data = {}) => api.post(`/emergency-requests/${id}/approve/`, data),
-    reject: (id, data) => api.post(`/emergency-requests/${id}/reject/`, data),
-    dispatch: (id, data) => api.post(`/emergency-requests/${id}/dispatch/`, data),
-    updateStatus: (id, data) => api.post(`/emergency-requests/${id}/update_status/`, data),
-    
-    // Emergency queries
-    getStatistics: () => api.get('/emergency-requests/statistics/'),
-    getDebugInfo: () => api.get('/emergency-requests/debug_info/'),
+  // Emergency actions with consistent error handling
+  approve: async (id, comment = '') => {
+    try {
+      const response = await api.post(`/emergency-requests/${id}/approve/`, { comment });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  reject: async (id, reason) => {
+    try {
+      const response = await api.post(`/emergency-requests/${id}/reject/`, { reason });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  dispatch: async (id, ambulanceId, driverInfo = {}) => {
+    try {
+      const response = await api.post(`/emergency-requests/${id}/dispatch/`, {
+        ambulance_id: ambulanceId,
+        ...driverInfo
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  updateStatus: async (id, status, metadata = {}) => {
+    try {
+      const response = await api.post(`/emergency-requests/${id}/update_status/`, {
+        status,
+        ...metadata
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
   },
 
+  // Enhanced emergency queries
+  getStatistics: async (timeRange) => {
+    try {
+      const params = timeRange ? {
+        start_date: timeRange.start,
+        end_date: timeRange.end
+      } : {};
+      
+      const response = await api.get('/emergency-requests/statistics/', { params });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  getTimeline: async (id) => {
+    try {
+      const response = await api.get(`/emergency-requests/${id}/timeline/`);
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  getByPatient: async (patientId) => {
+    try {
+      const response = await api.get('/emergency-requests/by-patient/', {
+        params: { patient_id: patientId }
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+  
+  // File attachments
+  uploadAttachment: async (id, file, description) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('description', description);
+      
+      const response = await api.post(`/emergency-requests/${id}/attachments/`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  // Bulk operations
+  bulkUpdateStatus: async (ids, status) => {
+    try {
+      const response = await api.post('/emergency-requests/bulk_update/', { ids, status });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  },
+
+  // Priority management
+  updatePriority: async (id, priority) => {
+    try {
+      const response = await api.post(`/emergency-requests/${id}/update_priority/`, { priority });
+      return response.data;
+    } catch (error) {
+      throw new Error(apiUtils.formatErrorMessage(error));
+    }
+  }
+},
   // Prevention Tips
   preventionTips: {
-    list: (params) => api.get('/prevention-tips/', { params }),
-    get: (id) => api.get(`/prevention-tips/${id}/`),
-    create: (data) => api.post('/prevention-tips/', data),
-    update: (id, data) => api.patch(`/prevention-tips/${id}/`, data),
-    delete: (id) => api.delete(`/prevention-tips/${id}/`),
-    getByDisease: (diseaseName) => api.get('/prevention-tips/by-disease/', {
-      params: { disease: diseaseName }
-    }),
+    list: async (params) => {
+      try {
+        const response = await api.get('/prevention-tips/', { params });
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    get: async (id) => {
+      try {
+        const response = await api.get(`/prevention-tips/${id}/`);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    create: async (data) => {
+      try {
+        const response = await api.post('/prevention-tips/', data);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    update: async (id, data) => {
+      try {
+        const response = await api.patch(`/prevention-tips/${id}/`, data);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    delete: async (id) => {
+      try {
+        const response = await api.delete(`/prevention-tips/${id}/`);
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
+    getByDisease: async (diseaseName) => {
+      try {
+        const response = await api.get('/prevention-tips/by-disease/', {
+          params: { disease: diseaseName }
+        });
+        return response.data;
+      } catch (error) {
+        throw new Error(apiUtils.formatErrorMessage(error));
+      }
+    },
   },
-
   // Notifications
   notifications: {
     list: (params) => api.get('/notifications/', { params }),
@@ -186,7 +334,6 @@ export const healthcareAPI = {
     acknowledge: (id) => api.post(`/notifications/${id}/acknowledge/`),
     markAsRead: (id) => api.patch(`/notifications/${id}/`, { is_read: true }),
   },
-
   // Profiles
   profiles: {
     list: (params) => api.get('/profiles/', { params }),
@@ -203,7 +350,7 @@ export const apiUtils = {
   uploadFile: async (endpoint, file, additionalData = {}) => {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     Object.keys(additionalData).forEach(key => {
       formData.append(key, additionalData[key]);
     });
@@ -214,7 +361,6 @@ export const apiUtils = {
       },
     });
   },
-
   // Error message formatter
   formatErrorMessage: (error) => {
     if (typeof error === 'string') return error;
@@ -227,13 +373,11 @@ export const apiUtils = {
     }
     return error.message || 'An unexpected error occurred';
   },
-
   // Role checking utilities
   hasRole: (requiredRole) => {
     const user = authAPI.getCurrentUser();
     return user?.role?.name === requiredRole;
   },
-
   isPatient: () => apiUtils.hasRole('Patient'),
   isDoctor: () => apiUtils.hasRole('Doctor'),
   isNurse: () => apiUtils.hasRole('Nurse'),
@@ -242,18 +386,17 @@ export const apiUtils = {
     const user = authAPI.getCurrentUser();
     return ['Doctor', 'Nurse'].includes(user?.role?.name);
   },
-
   // Bulk operations
   bulkUpdate: async (endpoint, ids, data) => {
     try {
       const promises = ids.map(id => api.patch(`${endpoint}/${id}/`, data));
       const results = await Promise.allSettled(promises);
       const failed = results.filter(r => r.status === 'rejected');
-      
+
       if (failed.length > 0) {
         throw new Error(`Failed to update ${failed.length} out of ${ids.length} items`);
       }
-      
+
       return {
         success: true,
         message: `${ids.length} items updated successfully`,
@@ -263,17 +406,16 @@ export const apiUtils = {
       throw new Error(`Bulk update failed: ${error.message}`);
     }
   },
-
   bulkDelete: async (endpoint, ids) => {
     try {
       const promises = ids.map(id => api.delete(`${endpoint}/${id}/`));
       const results = await Promise.allSettled(promises);
       const failed = results.filter(r => r.status === 'rejected');
-      
+
       if (failed.length > 0) {
         throw new Error(`Failed to delete ${failed.length} out of ${ids.length} items`);
       }
-      
+
       return {
         success: true,
         message: `${ids.length} items deleted successfully`
@@ -282,7 +424,6 @@ export const apiUtils = {
       throw new Error(`Bulk delete failed: ${error.message}`);
     }
   },
-
   // Export data
   exportData: async (endpoint, format = 'csv', filters = {}) => {
     try {
@@ -290,7 +431,7 @@ export const apiUtils = {
         params: { format, ...filters },
         responseType: 'blob'
       });
-      
+
       // Create download link
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
@@ -300,7 +441,7 @@ export const apiUtils = {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      
+
       return { success: true, message: 'Export completed successfully' };
     } catch (error) {
       throw new Error(`Export failed: ${error.message}`);

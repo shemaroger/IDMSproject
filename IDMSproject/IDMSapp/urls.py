@@ -29,13 +29,9 @@ router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-pl
 
 # Emergency services
 router.register(r'emergency-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-request')
-router.register(r'emergency-ambulance-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-ambulance-request')
 
-router.register(r'prevention-tips', PreventionTipViewSet)
 
-# Alerts and notifications
-# router.register(r'alerts', HealthcareWorkerAlertViewSet, basename='alert')
-# router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'prevention-tips', PreventionTipViewSet, basename='preventiontip')
 
 # Doctor specific endpoints
 router.register(r'doctors', DoctorViewSet, basename='doctor')

@@ -1970,304 +1970,7 @@ class DoctorCasesViewSet(viewsets.GenericViewSet):
 #             'critical_requests': serializer.data
 #         })
 
-class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing emergency ambulance requests
-    """
-    serializer_class = EmergencyAmbulanceRequestSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        """
-        Filter queryset based on user permissions
-        """
-        queryset = EmergencyAmbulanceRequest.objects.select_related(
-            'patient__user', 'clinic', 'approved_by', 'dispatched_by', 'completed_by'
-        )
-        
-        # Get current user
-        user = self.request.user
-        
-        # Debug logging
-        print(f"User: {user.email}, Role: {user.role.name}")
-        print(f"Total emergency requests in DB: {EmergencyAmbulanceRequest.objects.count()}")
-        
-        # Filter based on user role
-        if user.role.name == 'Patient':
-            # Patients can only see their own requests
-            print(f"Patient filter: patient__user={user}")
-            queryset = queryset.filter(patient__user=user)
-            
-        elif user.role.name in ['Doctor', 'Nurse']:
-            # Medical staff can see requests from their assigned clinics OR requests with no clinic
-            user_clinics = user.clinics.all()
-            print(f"Medical staff assigned clinics: {list(user_clinics)}")
-            
-            # Apply the clinic filter
-            clinic_filter = Q(clinic__in=user_clinics) | Q(clinic__isnull=True)
-            queryset = queryset.filter(clinic_filter)
-            print(f"After clinic filtering: {queryset.count()} requests")
-            
-        elif user.role.name == 'Admin':
-            # Admins can see all requests (no additional filtering)
-            print("Admin user - showing all requests")
-            pass
-        else:
-            # Unknown role - show no requests for security
-            print(f"Unknown role: {user.role.name} - blocking access")
-            queryset = queryset.none()
-        
-        final_count = queryset.count()
-        print(f"Final queryset count: {final_count}")
-        
-        return queryset.order_by('-request_time')
-    
-    def perform_create(self, serializer):
-        """
-        Set the patient automatically if user is a patient
-        """
-        user = self.request.user
-        print(f"Creating request for user: {user.email}, Role: {user.role.name}")
-        
-        if user.role.name == 'Patient':
-            # Get the patient object for this user
-            try:
-                patient = user.patient
-                print(f"Found patient: {patient.id}")
-                serializer.save(patient=patient)
-            except AttributeError:
-                print(f"Error: User {user.email} doesn't have a patient profile")
-                # Try to find patient by user relationship
-                from .models import Patient
-                try:
-                    patient = Patient.objects.get(user=user)
-                    print(f"Found patient via query: {patient.id}")
-                    serializer.save(patient=patient)
-                except Patient.DoesNotExist:
-                    print(f"Error: No patient found for user {user.email}")
-                    raise ValidationError("Patient profile not found for this user")
-        else:
-            # Non-patient users (doctors, nurses, admins) creating on behalf of someone
-            serializer.save()
-    
-    @action(detail=True, methods=['post'])
-    def approve(self, request, pk=None):
-        """
-        Approve an emergency request
-        """
-        emergency_request = self.get_object()
-        
-        # Check permissions
-        if request.user.role.name not in ['Admin', 'Doctor', 'Nurse']:
-            return Response(
-                {'error': 'You do not have permission to approve emergency requests'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Update approval status
-        emergency_request.approval_status = 'approved'
-        emergency_request.approved_by = request.user
-        emergency_request.approved_at = timezone.now()
-        emergency_request.approval_comments = request.data.get('comments', '')
-        emergency_request.priority_override = request.data.get('priority', '')
-        emergency_request.urgency_level = request.data.get('urgency_level', '')
-        emergency_request.save()
-        
-        print(f"Request {pk} approved by {request.user.email}")
-        
-        serializer = self.get_serializer(emergency_request)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def reject(self, request, pk=None):
-        """
-        Reject an emergency request
-        """
-        emergency_request = self.get_object()
-        
-        # Check permissions
-        if request.user.role.name not in ['Admin', 'Doctor', 'Nurse']:
-            return Response(
-                {'error': 'You do not have permission to reject emergency requests'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Validate rejection reason
-        reason = request.data.get('reason', '').strip()
-        if not reason:
-            return Response(
-                {'error': 'Rejection reason is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Update approval status
-        emergency_request.approval_status = 'rejected'
-        emergency_request.approved_by = request.user
-        emergency_request.approved_at = timezone.now()
-        emergency_request.approval_comments = request.data.get('comments', '')
-        emergency_request.rejection_reason = reason
-        emergency_request.save()
-        
-        print(f"Request {pk} rejected by {request.user.email}: {reason}")
-        
-        serializer = self.get_serializer(emergency_request)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def dispatch(self, request, pk=None):
-        """
-        Dispatch ambulance to emergency request
-        """
-        emergency_request = self.get_object()
-        
-        # Check if request is approved
-        if emergency_request.approval_status != 'approved':
-            return Response(
-                {'error': 'Emergency request must be approved before dispatch'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate ambulance ID
-        ambulance_id = request.data.get('ambulance_id', '').strip()
-        if not ambulance_id:
-            return Response(
-                {'error': 'Ambulance ID is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Update dispatch information
-        emergency_request.status = 'D'
-        emergency_request.assigned_ambulance = ambulance_id
-        emergency_request.hospital_destination = request.data.get('hospital_destination', '')
-        emergency_request.dispatched_by = request.user
-        emergency_request.dispatched_at = timezone.now()
-        emergency_request.save()
-        
-        print(f"Request {pk} dispatched by {request.user.email} - Ambulance: {ambulance_id}")
-        
-        serializer = self.get_serializer(emergency_request)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def update_status(self, request, pk=None):
-        """
-        Update emergency request status
-        """
-        emergency_request = self.get_object()
-        new_status = request.data.get('status')
-        
-        # Validate status
-        valid_statuses = dict(EmergencyAmbulanceRequest.STATUS_CHOICES)
-        if new_status not in valid_statuses:
-            return Response(
-                {'error': f'Invalid status. Valid options: {list(valid_statuses.keys())}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Update status and timestamps
-        old_status = emergency_request.status
-        emergency_request.status = new_status
-        now = timezone.now()
-        
-        # Set appropriate timestamp based on new status
-        if new_status == 'A' and not emergency_request.arrived_at:
-            emergency_request.arrived_at = now
-        elif new_status == 'T' and not emergency_request.in_transit_at:
-            emergency_request.in_transit_at = now
-        elif new_status == 'C' and not emergency_request.completed_at:
-            emergency_request.completed_at = now
-            emergency_request.completed_by = request.user
-        
-        emergency_request.save()
-        
-        print(f"Request {pk} status updated from {old_status} to {new_status} by {request.user.email}")
-        
-        serializer = self.get_serializer(emergency_request)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def statistics(self, request):
-        """
-        Get emergency request statistics
-        """
-        queryset = self.get_queryset()
-        
-        stats = {
-            'total': queryset.count(),
-            'pending': queryset.filter(approval_status='pending').count(),
-            'approved': queryset.filter(approval_status='approved').count(),
-            'rejected': queryset.filter(approval_status='rejected').count(),
-            'by_status': {
-                status_code: queryset.filter(status=status_code).count()
-                for status_code, _ in EmergencyAmbulanceRequest.STATUS_CHOICES
-            },
-            'by_clinic': list(
-                queryset.values('clinic__name')
-                .annotate(count=Count('id'))
-                .order_by('-count')
-            ),
-            'critical_pending': queryset.filter(
-                approval_status='pending',
-                priority_override='critical'
-            ).count(),
-        }
-        
-        print(f"Statistics generated for {request.user.email}: {stats}")
-        
-        return Response(stats)
-    
-    @action(detail=False, methods=['get'])
-    def debug_info(self, request):
-        """
-        Debug endpoint to check data and permissions
-        """
-        user = request.user
-        
-        # Get basic counts
-        total_requests = EmergencyAmbulanceRequest.objects.count()
-        user_clinics = list(user.clinics.all().values('id', 'name')) if hasattr(user, 'clinics') else []
-        
-        # Get sample requests
-        sample_requests = list(
-            EmergencyAmbulanceRequest.objects.values(
-                'id', 'patient_id', 'clinic_id', 'approval_status', 'status'
-            )[:5]
-        )
-        
-        debug_data = {
-            'user_info': {
-                'id': user.id,
-                'email': user.email,
-                'role': user.role.name,
-                'assigned_clinics': user_clinics
-            },
-            'database_info': {
-                'total_requests': total_requests,
-                'sample_requests': sample_requests
-            },
-            'queryset_info': {
-                'filtered_count': self.get_queryset().count(),
-                'filter_logic': f"Role: {user.role.name} - Applied appropriate filters"
-            }
-        }
-        
-        return Response(debug_data)
-    
-    def list(self, request, *args, **kwargs):
-        """
-        Override list to add debug logging
-        """
-        print(f"\n=== Emergency Request List Called ===")
-        print(f"User: {request.user.email}")
-        print(f"Role: {request.user.role.name}")
-        
-        # Call parent list method
-        response = super().list(request, *args, **kwargs)
-        
-        print(f"Returning {len(response.data.get('results', []))} requests")
-        print("=====================================\n")
-        
-        return response
+
 
 # ======================== ALERT SYSTEM VIEWS ========================
 # class ScreeningAlertViewSet(viewsets.ModelViewSet):
@@ -2291,86 +1994,135 @@ class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
 #         alert.save()
 #         return Response({'status': 'alert acknowledged'})
 class PreventionTipViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for prevention tips
-    """
     queryset = PreventionTip.objects.all()
     serializer_class = PreventionTipSerializer
-    permission_classes = [AllowAny]  # Tips are public information
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
-    def get_queryset(self):
-        """Filter tips by disease or category"""
-        queryset = super().get_queryset()
-        
-        disease_id = self.request.query_params.get('disease_id')
-        category = self.request.query_params.get('category')
-        disease_type = self.request.query_params.get('disease_type')
-        
-        if disease_id:
-            queryset = queryset.filter(disease_id=disease_id)
-        
-        if category:
-            queryset = queryset.filter(category=category)
-        
-        if disease_type:
-            queryset = queryset.filter(disease__disease_type=disease_type)
-        
-        return queryset.order_by('priority', 'category')
-    
+    # Filtering options
+    filterset_fields = {
+        'disease': ['exact'],
+        'category': ['exact'],
+        'priority': ['exact', 'lte', 'gte'],
+    }
+    search_fields = ['title', 'short_summary', 'detailed_content']
+    ordering_fields = ['priority', 'created_at']
+    ordering = ['priority']  # Default ordering
+
+    # Custom Actions
     @action(detail=False, methods=['get'])
     def by_disease(self, request):
-        """Get tips grouped by disease"""
-        disease_name = request.query_params.get('disease')
-        if not disease_name:
+        """
+        Get tips grouped by category for a specific disease
+        Example: /api/prevention-tips/by_disease/?disease=malaria
+        """
+        disease = request.query_params.get('disease', '').lower()
+        
+        if disease not in ['malaria', 'pneumonia']:
             return Response(
-                {'error': 'Disease parameter required'}, 
+                {'error': 'Invalid disease. Use "malaria" or "pneumonia"'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            disease = Disease.objects.get(name__icontains=disease_name)
-            tips = self.get_queryset().filter(disease=disease)
-            
-            # Group by category
-            grouped_tips = {}
-            for tip in tips:
-                if tip.category not in grouped_tips:
-                    grouped_tips[tip.category] = []
-                grouped_tips[tip.category].append(PreventionTipSerializer(tip).data)
-            
-            return Response({
-                'disease': disease.name,
-                'tips_by_category': grouped_tips,
-                'total_tips': tips.count()
-            })
+        tips = self.filter_queryset(self.get_queryset()).filter(disease=disease)
+        serializer = self.get_serializer(tips, many=True)
         
-        except Disease.DoesNotExist:
+        # Group by category
+        grouped_data = {
+            'disease': disease,
+            'categories': {
+                'prevention': [],
+                'self_care': [],
+                'when_to_seek_help': [],
+                'emergency_signs': []
+            }
+        }
+        
+        for tip in serializer.data:
+            grouped_data['categories'][tip['category']].append(tip)
+        
+        return Response(grouped_data)
+
+    @action(detail=True, methods=['post'])
+    def upload_image(self, request, pk=None):
+        """Handle image upload for a specific tip"""
+        tip = self.get_object()
+        if 'image' not in request.FILES:
             return Response(
-                {'error': f'Disease "{disease_name}" not found'}, 
-                status=status.HTTP_404_NOT_FOUND
+                {'error': 'No image file provided'},
+                status=status.HTTP_400_BAD_REQUEST
             )
+        
+        tip.image = request.FILES['image']
+        tip.save()
+        return Response({'status': 'image uploaded'})
 
 class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
     """
-    Enhanced ViewSet for emergency ambulance requests with symptom integration
+    Complete ViewSet for emergency ambulance requests with:
+    - Data display capabilities
+    - Status management
+    - Disease filtering
+    - Critical case tracking
     """
-    queryset = EmergencyAmbulanceRequest.objects.all()
+    queryset = EmergencyAmbulanceRequest.objects.select_related(
+        'patient__user',
+        'clinic',
+        'approved_by',
+        'dispatched_by',
+        'completed_by'
+    ).all()
     serializer_class = EmergencyAmbulanceRequestSerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ['update_status', 'critical_cases']:
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
+
     def get_queryset(self):
-        """Filter by user's patient profile if not staff"""
+        """Filter by user's access level with optimized queries"""
         queryset = super().get_queryset()
         
         if not self.request.user.is_staff:
+            # Patients can only see their own requests
             try:
                 patient = Patient.objects.get(user=self.request.user)
-                queryset = queryset.filter(patient=patient)
+                return queryset.filter(patient=patient)
             except Patient.DoesNotExist:
                 return EmergencyAmbulanceRequest.objects.none()
         
+        # Staff can filter by various parameters
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+            
+        disease_filter = self.request.query_params.get('disease')
+        if disease_filter:
+            queryset = queryset.filter(suspected_disease__icontains=disease_filter)
+            
         return queryset.order_by('-request_time')
-    
+
+    def list(self, request, *args, **kwargs):
+        """Enhanced list view with summary statistics"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        
+        # Add summary data
+        response_data = {
+            'count': queryset.count(),
+            'status_counts': dict(queryset.values_list('status').annotate(count=models.Count('id'))),
+            'results': serializer.data
+        }
+        
+        return Response(response_data)
+
     @action(detail=False, methods=['get'])
     def by_disease(self, request):
         """Get emergency requests filtered by suspected disease"""
@@ -2389,61 +2141,127 @@ class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
             'total_requests': requests.count(),
             'requests': serializer.data
         })
-    
-    @action(detail=False, methods=['get'])
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAdminUser])
     def critical_cases(self, request):
         """Get emergency requests from critical symptom sessions"""
-        # Find sessions with critical severity
+        time_frame = timezone.now() - timezone.timedelta(hours=24)
+        
         critical_sessions = SymptomCheckerSession.objects.filter(
             severity_level='critical',
-            created_at__gte=timezone.now() - timezone.timedelta(days=1)
-        )
+            created_at__gte=time_frame
+        ).select_related('user')
         
-        # Get associated emergency requests
+        user_ids = [s.user.id for s in critical_sessions if s.user]
         critical_requests = self.get_queryset().filter(
-            patient__user__in=[s.user for s in critical_sessions if s.user]
+            patient__user__id__in=user_ids
         )
         
         serializer = self.get_serializer(critical_requests, many=True)
         
         return Response({
+            'time_frame': time_frame,
             'total_critical_sessions': critical_sessions.count(),
             'emergency_requests_created': critical_requests.count(),
             'requests': serializer.data
         })
-    
-    @action(detail=True, methods=['patch'])
+
+    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAdminUser])
     def update_status(self, request, pk=None):
-        """Update emergency request status"""
+        """Update emergency request status with complete state management"""
         emergency_request = self.get_object()
         new_status = request.data.get('status')
         
-        if new_status not in dict(EmergencyAmbulanceRequest.STATUS_CHOICES):
+        valid_statuses = dict(EmergencyAmbulanceRequest.STATUS_CHOICES)
+        if new_status not in valid_statuses:
             return Response(
-                {'error': 'Invalid status'}, 
+                {'error': f'Invalid status. Valid choices are: {valid_statuses}'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # State transition logic
+        current_status = emergency_request.status
+        now = timezone.now()
+        
+        status_updates = {
+            'D': {  # Dispatched
+                'dispatched_at': now,
+                'dispatched_by': request.user,
+                'assigned_ambulance': request.data.get('assigned_ambulance')
+            },
+            'A': {  # Arrived
+                'arrived_at': now
+            },
+            'T': {  # In Transit
+                'in_transit_at': now
+            },
+            'C': {  # Completed
+                'completed_at': now,
+                'completed_by': request.user,
+                'hospital_destination': request.data.get('hospital_destination')
+            }
+        }
+        
+        if new_status in status_updates:
+            updates = status_updates[new_status]
+            if new_status == 'D' and not updates['assigned_ambulance']:
+                return Response(
+                    {'error': 'Ambulance ID required when dispatching'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if new_status == 'C' and not updates['hospital_destination']:
+                return Response(
+                    {'error': 'Hospital destination required when completing'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            for field, value in updates.items():
+                setattr(emergency_request, field, value)
+        
         emergency_request.status = new_status
-        
-        # Update additional fields based on status
-        if new_status == 'D':  # Dispatched
-            emergency_request.assigned_ambulance = request.data.get('assigned_ambulance', '')
-        elif new_status == 'C':  # Completed
-            emergency_request.hospital_destination = request.data.get('hospital_destination', '')
-        
         emergency_request.save()
         
         return Response({
-            'message': f'Status updated to {emergency_request.get_status_display()}',
-            'request': self.get_serializer(emergency_request).data
+            'message': f'Status changed from {current_status} to {new_status}',
+            'request': self.get_serializer(emergency_request).data,
+            'valid_transitions': self._get_valid_transitions(new_status)
         })
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        patient_id = self.request.query_params.get('patient')
+        
+        if patient_id:
+            queryset = queryset.filter(patient_id=patient_id)
+            
+        return queryset
+
+    def _get_valid_transitions(self, current_status):
+        """Helper method to show possible next statuses"""
+        transitions = {
+            'P': ['D', 'R'],  # Pending can go to Dispatched or Rejected
+            'D': ['A', 'T'],  # Dispatched can go to Arrived or In Transit
+            'A': ['T', 'C'],  # Arrived can go to In Transit or Completed
+            'T': ['C']       # In Transit can only go to Completed
+        }
+        return transitions.get(current_status, [])
 
 class PreventionTipViewSet(viewsets.ModelViewSet):
+    """
+    A viewset that provides all CRUD operations for prevention tips.
+    """
     queryset = PreventionTip.objects.all()
     serializer_class = PreventionTipSerializer
-
     
+    # Filtering and ordering options
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['category', 'priority']
+    ordering_fields = ['priority', 'created_at', 'updated_at']
+    search_fields = ['title', 'description']
+    
+    # Default ordering
+    ordering = ['priority', '-created_at']
+
+
 # Additional utility views for symptom checker integration
 
 

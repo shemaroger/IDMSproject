@@ -623,10 +623,69 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
         
         return value
 class PreventionTipSerializer(serializers.ModelSerializer):
+    # Human-readable display fields
+    disease_display = serializers.CharField(
+        source='get_disease_display', 
+        read_only=True
+    )
+    category_display = serializers.CharField(
+        source='get_category_display', 
+        read_only=True
+    )
+    content_type_display = serializers.CharField(
+        source='get_content_type_display',
+        read_only=True
+    )
+    
+    # Formatted content
+    formatted_content = serializers.SerializerMethodField()
+    
     class Meta:
         model = PreventionTip
-        fields = '__all__'
+        fields = [
+            'id',
+            # Core fields
+            'disease', 'disease_display',
+            'category', 'category_display',
+            'title',
+            # Content fields
+            'content_type', 'content_type_display',
+            'short_summary', 'detailed_content', 'formatted_content',
+            # Medical info
+            'risk_factors', 'prevention_methods', 'symptoms',
+            # Media
+            'image', 'video', 'video_url',
+            # Metadata
+            'priority', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+        extra_kwargs = {
+            'disease': {'help_text': "Must be 'malaria' or 'pneumonia'"},
+            'priority': {'min_value': 1, 'max_value': 10}
+        }
 
+    def get_formatted_content(self, obj):
+        """Converts content to structured format based on type"""
+        content_lines = [line.strip() for line in obj.detailed_content.split('\n') if line.strip()]
+        
+        if obj.content_type == 'bullet':
+            return {'type': 'bullets', 'items': content_lines}
+        elif obj.content_type == 'step':
+            return {'type': 'steps', 'items': [f"{i+1}. {line}" for i, line in enumerate(content_lines)]}
+        elif obj.content_type == 'faq':
+            qa_pairs = []
+            for i in range(0, len(content_lines), 2):
+                q = content_lines[i]
+                a = content_lines[i+1] if i+1 < len(content_lines) else ""
+                qa_pairs.append({'question': q, 'answer': a})
+            return {'type': 'faq', 'items': qa_pairs}
+        return {'type': 'text', 'content': obj.detailed_content}
+
+    def validate_disease(self, value):
+        """Ensures disease is either malaria or pneumonia"""
+        if value.lower() not in ['malaria', 'pneumonia']:
+            raise serializers.ValidationError("Disease must be Malaria or Pneumonia")
+        return value.lower()
 class EmergencyAmbulanceRequestSerializer(serializers.ModelSerializer):
     """
     Enhanced serializer for EmergencyAmbulanceRequest with disease linking
@@ -699,20 +758,6 @@ class AppointmentRequestSerializer(serializers.Serializer):
         if not User.objects.filter(id=data['provider_id'], role__name__in=['Doctor', 'Nurse']).exists():
             raise serializers.ValidationError({"provider_id": "Invalid healthcare provider"})
         return data
-
-class EmergencyRequestSerializer(serializers.Serializer):
-    patient_id = serializers.IntegerField(min_value=1)
-    location = serializers.CharField(max_length=255)
-    condition = serializers.CharField(max_length=500)
-    symptoms = serializers.ListField(
-        child=serializers.IntegerField(min_value=1),
-        required=False
-    )
-    
-    def validate_patient_id(self, value):
-        if not Patient.objects.filter(id=value).exists():
-            raise serializers.ValidationError("Patient not found")
-        return value
 
 # # ======================== RESPONSE SERIALIZERS ========================
 # class RiskAssessmentResponseSerializer(serializers.Serializer):

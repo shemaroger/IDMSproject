@@ -11,9 +11,11 @@ import {
   LogOut, 
   Settings,
   ChevronDown,
-  Heart,
-  Loader2
+  Loader2,
+  Sun,
+  Moon
 } from 'lucide-react';
+import logo from '../../assets/healthlink-logo.png';
 
 const Header = ({ onToggleSidebar, sidebarOpen }) => {
   const { user, logout } = useAuth();
@@ -22,8 +24,9 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [darkMode, setDarkMode] = useState(false); // Default to light mode
 
-  // Load user profile data for profile picture
+  // Load user profile data
   useEffect(() => {
     const loadUserProfile = async () => {
       if (!user?.id) return;
@@ -31,13 +34,11 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
       try {
         setProfileLoading(true);
         
-        // Try to get profile using the new endpoint first
         let profileData = null;
         try {
           const profileResponse = await healthcareAPI.profiles.getMyProfile();
           profileData = profileResponse.data;
         } catch (profileError) {
-          // Fallback to old method
           const profileResponse = await healthcareAPI.profiles.list({ user: user.id });
           profileData = profileResponse.data?.results?.[0] || profileResponse.data?.[0];
         }
@@ -54,31 +55,44 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
     loadUserProfile();
   }, [user?.id]);
 
+  // Initialize theme (default to light)
+  useEffect(() => {
+    const savedMode = localStorage.getItem('darkMode');
+    if (savedMode !== null) {
+      setDarkMode(savedMode === 'true');
+    } else {
+      // Default to light mode if no preference saved
+      setDarkMode(false);
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
+  const toggleDarkMode = () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    document.documentElement.classList.toggle('dark', newMode);
+    localStorage.setItem('darkMode', newMode);
+  };
+
   // Get profile image URL
   const getProfileImageUrl = () => {
     if (userProfile?.profile_picture_url) {
-      // Convert relative path to full URL
       if (userProfile.profile_picture_url.startsWith('/media/')) {
         return `http://localhost:8000${userProfile.profile_picture_url}`;
       }
-      // If it's already a full URL, return as-is
       if (userProfile.profile_picture_url.startsWith('http')) {
         return userProfile.profile_picture_url;
       }
-      // If it doesn't start with /media/ or http, add the full base
       return `http://localhost:8000${userProfile.profile_picture_url}`;
     }
     
     if (userProfile?.profile_picture) {
-      // If it's already a full URL, return as-is
       if (userProfile.profile_picture.startsWith('http')) {
         return userProfile.profile_picture;
       }
-      // If it's a relative path, make it absolute
       if (userProfile.profile_picture.startsWith('/media/')) {
         return `http://localhost:8000${userProfile.profile_picture}`;
       }
-      // If it doesn't start with /media/ or http, add the full base
       return `http://localhost:8000${userProfile.profile_picture}`;
     }
     
@@ -91,7 +105,6 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
       await logout();
     } catch (error) {
       console.error('Logout error:', error);
-      // Logout function should handle errors gracefully
     } finally {
       setIsLoggingOut(false);
     }
@@ -104,8 +117,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
 
   const handleSettingsClick = () => {
     setShowUserMenu(false);
-    // You can add settings navigation here later
-    console.log('Settings clicked');
+    navigate('/settings');
   };
 
   // Profile Avatar Component
@@ -143,7 +155,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
   };
 
   return (
-    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-40">
+    <header className={`bg-white border-gray-200 shadow-sm border-b sticky top-0 z-40`}>
       <div className="flex items-center justify-between h-16 px-4">
         {/* Left side - Logo and mobile menu toggle */}
         <div className="flex items-center">
@@ -155,9 +167,15 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
           </button>
           
           <div className="flex items-center ml-2 lg:ml-0">
-            <Heart className="h-8 w-8 text-blue-600 mr-3" />
+            <img 
+              src={logo} 
+              alt="HealthLink Logo" 
+              className="h-8 w-auto mr-3" 
+            />
             <div>
-              <h1 className="text-xl font-semibold text-gray-900">HealthLink</h1>
+              <h1 className="text-xl font-semibold text-gray-900">
+                HealthLink
+              </h1>
               <p className="text-xs text-gray-500 hidden sm:block">
                 {user?.role?.name} Portal
               </p>
@@ -165,10 +183,23 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
           </div>
         </div>
 
-        {/* Right side - Notifications and user menu */}
+        {/* Right side - Theme toggle, notifications and user menu */}
         <div className="flex items-center space-x-4">
+          {/* Dark Mode Toggle */}
+          <button 
+            onClick={toggleDarkMode}
+            className="p-2 rounded-full text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            aria-label="Toggle dark mode"
+          >
+            {darkMode ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <Moon className="h-5 w-5" />
+            )}
+          </button>
+
           {/* Notifications */}
-          <button className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors">
+          <button className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full">
             <Bell className="h-6 w-6" />
             <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full"></span>
           </button>
@@ -177,15 +208,17 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center space-x-2 p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex items-center space-x-2 p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
               disabled={isLoggingOut}
             >
               <ProfileAvatar size="sm" />
               <div className="hidden sm:block text-left">
-                <p className="text-sm font-medium">
+                <p className="text-sm font-medium text-gray-900">
                   {user?.first_name} {user?.last_name}
                 </p>
-                <p className="text-xs text-gray-500">{user?.role?.name}</p>
+                <p className="text-xs text-gray-500">
+                  {user?.role?.name}
+                </p>
               </div>
               <ChevronDown className={`h-4 w-4 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
             </button>
@@ -209,13 +242,15 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
                         <p className="text-sm font-medium text-gray-900 truncate">
                           {user?.first_name} {user?.last_name}
                         </p>
-                        <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {user?.email}
+                        </p>
                         <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full mt-1 ${
-                          user?.role?.name === 'Admin' ? 'bg-red-100 text-red-700' :
-                          user?.role?.name === 'Doctor' ? 'bg-blue-100 text-blue-700' :
-                          user?.role?.name === 'Nurse' ? 'bg-green-100 text-green-700' :
-                          user?.role?.name === 'Patient' ? 'bg-purple-100 text-purple-700' :
-                          'bg-gray-100 text-gray-700'
+                          user?.role?.name === 'Admin' ? 'bg-red-100 text-red-800' :
+                          user?.role?.name === 'Doctor' ? 'bg-blue-100 text-blue-800' :
+                          user?.role?.name === 'Nurse' ? 'bg-green-100 text-green-800' :
+                          user?.role?.name === 'Patient' ? 'bg-purple-100 text-purple-800' :
+                          'bg-gray-100 text-gray-800'
                         }`}>
                           {user?.role?.name || 'No Role'}
                         </span>
@@ -227,7 +262,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
                   <div className="py-1">
                     <button 
                       onClick={handleProfileClick}
-                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900"
                     >
                       <User className="h-4 w-4 mr-3 text-gray-400" />
                       View Profile
@@ -235,7 +270,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
                     
                     <button 
                       onClick={handleSettingsClick}
-                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                      className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900"
                     >
                       <Settings className="h-4 w-4 mr-3 text-gray-400" />
                       Settings
@@ -247,7 +282,7 @@ const Header = ({ onToggleSidebar, sidebarOpen }) => {
                     <button 
                       onClick={handleLogout}
                       disabled={isLoggingOut}
-                      className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isLoggingOut ? (
                         <Loader2 className="h-4 w-4 mr-3 animate-spin" />

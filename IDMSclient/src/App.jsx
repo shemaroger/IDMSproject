@@ -19,6 +19,7 @@ import PatientDiagnosesPage from './pages/patient/PatientDiagnosesPage';
 import ClinicSymptomDashboard from './pages/admin/ClinicSymptomDashboard';
 import SymptomHistoryPage from './pages/patient/SymptomHistoryPage';
 import SymptomResultsPage from './pages/patient/SymptomResultsPage';
+import PreventionTipManagement from './pages/admin/PreventionTipManagement';
 
 
 // Provider pages
@@ -316,6 +317,11 @@ function App() {
             <Route path="/admin/appointments" element={
               <AdminRoute>
                 <AppointmentManagement />
+              </AdminRoute>
+            } />
+            <Route path="/admin/prevention-tips" element={
+              <AdminRoute>
+                <PreventionTipManagement />
               </AdminRoute>
             } />
             

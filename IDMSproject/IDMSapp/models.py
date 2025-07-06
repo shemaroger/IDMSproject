@@ -1092,50 +1092,131 @@ class TreatmentPlan(models.Model):
 # 🆕 NEW: Prevention tips linked to diseases
 class PreventionTip(models.Model):
     """
-    Prevention and care tips for diseases
+    Comprehensive prevention and care tips model
+    for Malaria and Pneumonia only
     """
+    
+    # Disease Choices (Strictly Malaria/Pneumonia only)
+    DISEASE_CHOICES = [
+        ('malaria', 'Malaria'),
+        ('pneumonia', 'Pneumonia'),
+    ]
+    
+    # Content Presentation Types
+    CONTENT_TYPES = [
+        ('text', 'Text Paragraph'),
+        ('bullet', 'Bullet Points'),
+        ('step', 'Step-by-Step'),
+        ('faq', 'FAQ Format'),
+    ]
+    
+    # Tip Categories
     TIP_CATEGORIES = [
         ('prevention', 'Prevention'),
         ('self_care', 'Self Care'),
         ('when_to_seek_help', 'When to Seek Help'),
         ('emergency_signs', 'Emergency Signs'),
     ]
-
-    # Link to a Disease
-    disease = models.ForeignKey(
-        Disease,
-        on_delete=models.CASCADE,
-        related_name='prevention_tips'
+    
+    # --- Core Fields ---
+    disease = models.CharField(
+        max_length=20,
+        choices=DISEASE_CHOICES,
+        help_text="Must be either Malaria or Pneumonia"
     )
-
-    # Category of the tip
-    category = models.CharField(max_length=20, choices=TIP_CATEGORIES)
-
-    # Title and description of the tip
-    title = models.CharField(max_length=200)
-    description = models.TextField()
-
-    # Priority of the tip
-    priority = models.IntegerField(default=1, help_text="1=highest priority, 10=lowest")
-
-    # Image field to store related images
-    image = models.ImageField(upload_to='prevention_tips/images/', null=True, blank=True)
-
-    # File field to store related videos
-    video = models.FileField(upload_to='prevention_tips/videos/', null=True, blank=True)
-
-    # URL field to store links to external videos or resources
-    video_url = models.URLField(null=True, blank=True)
-
-    # Timestamps
+    
+    category = models.CharField(
+        max_length=20,
+        choices=TIP_CATEGORIES,
+        help_text="Type of prevention tip"
+    )
+    
+    title = models.CharField(
+        max_length=200,
+        help_text="Short, attention-grabbing title"
+    )
+    
+    # --- Content Fields ---
+    content_type = models.CharField(
+        max_length=20,
+        choices=CONTENT_TYPES,
+        default='text',
+        help_text="How the content should be displayed"
+    )
+    
+    short_summary = models.TextField(
+        max_length=350,
+        help_text="Brief summary for cards/lists (max 350 chars)"
+    )
+    
+    detailed_content = models.TextField(
+        help_text="Main content. Use line breaks for bullets/steps"
+    )
+    
+    # --- Medical Information ---
+    risk_factors = models.TextField(
+        blank=True,
+        help_text="Key risk factors for this disease"
+    )
+    
+    prevention_methods = models.TextField(
+        blank=True,
+        help_text="Specific prevention techniques"
+    )
+    
+    symptoms = models.TextField(
+        blank=True,
+        help_text="Common symptoms to watch for"
+    )
+    
+    # --- Multimedia ---
+    image = models.ImageField(
+        upload_to='prevention_tips/images/',
+        null=True,
+        blank=True,
+        help_text="Optional supporting image"
+    )
+    
+    video = models.FileField(
+        upload_to='prevention_tips/videos/',
+        null=True,
+        blank=True,
+        help_text="Optional instructional video"
+    )
+    
+    video_url = models.URLField(
+        null=True,
+        blank=True,
+        help_text="External video link (YouTube, etc.)"
+    )
+    
+    # --- Metadata ---
+    priority = models.IntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+        help_text="Display priority (1=highest, 10=lowest)"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['priority', 'category']
-
+    
+    # --- Methods ---
     def __str__(self):
-        return f"{self.disease.name}: {self.title}"
+        return f"[{self.get_disease_display()}] {self.title}"
+    
+    def content_as_list(self):
+        """Returns detailed content as formatted list"""
+        return [line.strip() for line in self.detailed_content.split('\n') if line.strip()]
+    
+    class Meta:
+        ordering = ['priority', 'disease', 'category']
+        verbose_name = "Disease Prevention Tip"
+        verbose_name_plural = "Disease Prevention Tips"
+        indexes = [
+            models.Index(fields=['disease', 'category']),
+            models.Index(fields=['priority']),
+        ]
+
 
 class ScreeningAlert(models.Model):
     """
