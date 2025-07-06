@@ -2076,7 +2076,7 @@ class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['update_status', 'critical_cases']:
-            return [permissions.IsAuthenticated()]
+            return [permissions.IsAuthenticated, permissions.IsAdminUser()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -2245,21 +2245,21 @@ class EmergencyAmbulanceRequestViewSet(viewsets.ModelViewSet):
         }
         return transitions.get(current_status, [])
 
-class PreventionTipViewSet(viewsets.ModelViewSet):
-    """
-    A viewset that provides all CRUD operations for prevention tips.
-    """
-    queryset = PreventionTip.objects.all()
-    serializer_class = PreventionTipSerializer
+# class PreventionTipViewSet(viewsets.ModelViewSet):
+#     """
+#     A viewset that provides all CRUD operations for prevention tips.
+#     """
+#     queryset = PreventionTip.objects.all()
+#     serializer_class = PreventionTipSerializer
     
-    # Filtering and ordering options
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
-    filterset_fields = ['category', 'priority']
-    ordering_fields = ['priority', 'created_at', 'updated_at']
-    search_fields = ['title', 'description']
+#     # Filtering and ordering options
+#     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+#     filterset_fields = ['category', 'priority']
+#     ordering_fields = ['priority', 'created_at', 'updated_at']
+#     search_fields = ['title', 'description']
     
-    # Default ordering
-    ordering = ['priority', '-created_at']
+#     # Default ordering
+#     ordering = ['priority', '-created_at']
 
 
 # Additional utility views for symptom checker integration

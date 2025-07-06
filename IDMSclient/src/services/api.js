@@ -119,8 +119,160 @@ export const healthcareAPI = {
     delete: (id) => api.delete(`/patients/${id}/`),
   },
   // Appointments
+   // Appointments
+   appointments: {
+    list: (params) => api.get('/appointments/', { params }),
+    get: (id) => api.get(`/appointments/${id}/`),
+    create: (data) => api.post('/appointments/', data),
+    update: (id, data) => api.patch(`/appointments/${id}/`, data),
+    delete: (id) => api.delete(`/appointments/${id}/`),
+    // Appointment actions
+    approve: (id) => api.post(`/appointments/${id}/approve/`),
+    cancel: (id) => api.post(`/appointments/${id}/cancel/`),
+    complete: (id, notes = '') => api.post(`/appointments/${id}/complete/`, { notes }),
+    // Appointment queries
+    myUpcoming: () => api.get('/appointments/my_upcoming/'),
+    stats: () => api.get('/appointments/stats/'),
+    calendarView: (startDate, endDate) => api.get('/appointments/calendar_view/', {
+      params: { start_date: startDate, end_date: endDate }
+    }),
+  },
+  // appointments: {
+  //   list: async (params) => {
+  //     try {
+  //       const response = await api.get('/appointments/', { params });
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   get: async (id) => {
+  //     try {
+  //       const response = await api.get(`/appointments/${id}/`);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   create: async (data) => {
+  //     try {
+  //       const response = await api.post('/appointments/', data);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   update: async (id, data) => {
+  //     try {
+  //       const response = await api.patch(`/appointments/${id}/`, data);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   delete: async (id) => {
+  //     try {
+  //       const response = await api.delete(`/appointments/${id}/`);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   approve: async (id) => {
+  //     try {
+  //       const response = await api.post(`/appointments/${id}/approve/`);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   cancel: async (id) => {
+  //     try {
+  //       const response = await api.post(`/appointments/${id}/cancel/`);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   complete: async (id, data) => {
+  //     try {
+  //       const response = await api.post(`/appointments/${id}/complete/`, data);
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getAvailableClinics: async () => {
+  //     try {
+  //       const response = await api.get('/appointments/available_clinics/');
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getClinicDoctors: async (clinicId) => {
+  //     try {
+  //       const response = await api.get('/appointments/clinic_doctors/', { params: { clinic_id: clinicId } });
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getDoctorAvailability: async (doctorId, clinicId, date) => {
+  //     try {
+  //       const response = await api.get('/appointments/doctor_availability/', {
+  //         params: { doctor_id: doctorId, clinic_id: clinicId, date }
+  //       });
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getPendingForApproval: async () => {
+  //     try {
+  //       const response = await api.get('/appointments/pending_for_approval/');
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getMyUpcoming: async () => {
+  //     try {
+  //       const response = await api.get('/appointments/my_upcoming/');
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getStats: async () => {
+  //     try {
+  //       const response = await api.get('/appointments/stats/');
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   getCalendarView: async (startDate, endDate) => {
+  //     try {
+  //       const response = await api.get('/appointments/calendar_view/', {
+  //         params: { start_date: startDate, end_date: endDate }
+  //       });
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   },
+  //   bulkApprove: async (appointmentIds) => {
+  //     try {
+  //       const response = await api.post('/appointments/bulk_approve/', { appointment_ids: appointmentIds });
+  //       return response.data;
+  //     } catch (error) {
+  //       throw new Error(apiUtils.formatErrorMessage(error));
+  //     }
+  //   }
+  // },
  // Emergency Requests API - Enhanced version
-emergencies: {
+ emergencies: {
   // Basic CRUD operations
   list: async (params) => {
     try {
@@ -163,7 +315,7 @@ emergencies: {
     }
   },
 
-  // Emergency actions with consistent error handling
+  // Emergency actions
   approve: async (id, comment = '') => {
     try {
       const response = await api.post(`/emergency-requests/${id}/approve/`, { comment });
@@ -193,7 +345,7 @@ emergencies: {
   },
   updateStatus: async (id, status, metadata = {}) => {
     try {
-      const response = await api.post(`/emergency-requests/${id}/update_status/`, {
+      const response = await api.patch(`/emergency-requests/${id}/update_status/`, {
         status,
         ...metadata
       });
@@ -203,7 +355,7 @@ emergencies: {
     }
   },
 
-  // Enhanced emergency queries
+  // Enhanced queries
   getStatistics: async (timeRange) => {
     try {
       const params = timeRange ? {
@@ -227,8 +379,8 @@ emergencies: {
   },
   getByPatient: async (patientId) => {
     try {
-      const response = await api.get('/emergency-requests/by-patient/', {
-        params: { patient_id: patientId }
+      const response = await api.get('/emergency-requests/', {
+        params: { patient: patientId }
       });
       return response.data;
     } catch (error) {
@@ -274,6 +426,7 @@ emergencies: {
     }
   }
 },
+
   // Prevention Tips
   preventionTips: {
     list: async (params) => {

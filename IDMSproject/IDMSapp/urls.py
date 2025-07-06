@@ -29,6 +29,8 @@ router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-pl
 
 # Emergency services
 router.register(r'emergency-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-request')
+# router.register(r'emergency-ambulance-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-ambulance-requests')
+
 
 
 router.register(r'prevention-tips', PreventionTipViewSet, basename='preventiontip')
