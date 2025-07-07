@@ -1,9 +1,8 @@
-// screens/LoginScreen.js
+// App.js or screens/LoginScreen.js
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authAPI } from '../services/api'; // Adjust the import path as necessary
 
 const LoginScreen = () => {
   const [formData, setFormData] = useState({
@@ -11,23 +10,11 @@ const LoginScreen = () => {
     password: '',
     remember: false,
   });
-
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
   const navigation = useNavigation();
-
-  useEffect(() => {
-    const loadRememberedEmail = async () => {
-      const rememberedEmail = await AsyncStorage.getItem('rememberUser');
-      if (rememberedEmail) {
-        setFormData(prev => ({ ...prev, email: rememberedEmail, remember: true }));
-      }
-    };
-
-    loadRememberedEmail();
-  }, []);
 
   const handleInputChange = (name, value) => {
     setFormData({
@@ -42,7 +29,8 @@ const LoginScreen = () => {
     setError('');
 
     try {
-      await authAPI.login(formData.email, formData.password);
+      // Replace with your actual login logic
+      // await login(formData.email, formData.password);
 
       if (formData.remember) {
         await AsyncStorage.setItem('rememberUser', formData.email);
@@ -51,21 +39,32 @@ const LoginScreen = () => {
       }
 
       Alert.alert('Success', 'Login successful');
-      navigation.navigate('Dashboard'); // Adjust 'Dashboard' to your actual dashboard screen name
+      navigation.navigate('Dashboard');
     } catch (err) {
       console.error('Login error:', err);
-      setError(err.message || 'Login failed. Please check your credentials.');
-      Alert.alert('Error', err.message || 'Login failed. Please check your credentials.');
+      setError('Login failed. Please check your credentials.');
+      Alert.alert('Error', 'Login failed. Please check your credentials.');
     } finally {
       setIsLoading(false);
     }
   };
 
+  useEffect(() => {
+    const loadRememberedEmail = async () => {
+      const rememberedEmail = await AsyncStorage.getItem('rememberUser');
+      if (rememberedEmail) {
+        setFormData(prev => ({ ...prev, email: rememberedEmail, remember: true }));
+      }
+    };
+
+    loadRememberedEmail();
+  }, []);
+
   return (
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Image source={require('../assets/healthlink-logo.png')} style={styles.logo} />
+          <Image source={require('./assets/healthlink-logo.png')} style={styles.logo} />
           <Text style={styles.headerText}>Welcome Back</Text>
         </View>
 
@@ -86,7 +85,7 @@ const LoginScreen = () => {
           <Text style={styles.label}>Password</Text>
           <View style={styles.passwordContainer}>
             <TextInput
-              style={styles.input}
+              style={styles.passwordInput}
               placeholder="••••••••"
               placeholderTextColor="#aaa"
               value={formData.password}
@@ -122,7 +121,7 @@ const LoginScreen = () => {
 
           <View style={styles.signupContainer}>
             <Text style={styles.signupText}>Don't have an account?</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('SignUp')}>
+            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
               <Text style={styles.signupLink}>Create new account</Text>
             </TouchableOpacity>
           </View>
@@ -188,14 +187,22 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    backgroundColor: '#374151',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    padding: 12,
+    color: '#fff',
     marginBottom: 16,
   },
   showPasswordText: {
     color: '#9CA3AF',
-    textAlign: 'right',
-    marginTop: -30,
-    marginBottom: 16,
-    paddingRight: 10,
+    marginLeft: 8,
   },
   rememberForgotContainer: {
     flexDirection: 'row',

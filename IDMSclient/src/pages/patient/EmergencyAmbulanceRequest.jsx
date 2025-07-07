@@ -73,7 +73,18 @@ const PatientEmergencyPage = () => {
   const fetchClinics = async () => {
     try {
       const response = await healthcareAPI.clinics.list();
-      setClinics(response.results || response || []);
+      console.log('Clinics API Response:', response);
+
+      let clinicsData = [];
+      if (Array.isArray(response)) {
+        clinicsData = response;
+      } else if (response?.data) {
+        clinicsData = response.data?.results || response.data || [];
+      } else if (response?.results) {
+        clinicsData = response.results;
+      }
+
+      setClinics(Array.isArray(clinicsData) ? clinicsData : []);
     } catch (error) {
       console.error('Error fetching clinics:', error);
       setError(error.message);
@@ -82,40 +93,73 @@ const PatientEmergencyPage = () => {
 
   const fetchEmergencyRequests = async () => {
     try {
+      setLoading(true);
+      setError('');
+
       const currentUser = authAPI.getCurrentUser();
+      console.log('Current user:', currentUser);
+
       let patientId = currentUser?.patient_id || currentUser?.id;
-      
+      console.log('Patient ID:', patientId);
       if (!patientId) {
-        throw new Error('Patient profile not found');
+        throw new Error('Patient profile not found. Please ensure you are logged in as a patient.');
       }
-  
-      const response = await healthcareAPI.emergencies.list({ patient: patientId });
-      
-      // Handle both array and paginated responses
-      const requests = Array.isArray(response) ? 
-        response : 
-        (response.results || response.data || []);
-      
-      setEmergencyRequests(requests);
-      setError(null);
+
+      const response = await healthcareAPI.emergencies.list({
+        patient: patientId,
+        include_patient: true,
+        expand: 'patient'
+      });
+
+      console.log('Emergency API Response:', response);
+
+      let requestsData = [];
+      if (Array.isArray(response)) {
+        requestsData = response;
+      } else if (response?.data) {
+        requestsData = response.data?.results || response.data || [];
+      } else if (response?.results) {
+        requestsData = response.results;
+      }
+
+      console.log('Extracted requests data:', requestsData);
+      console.log('Sample request:', requestsData[0]);
+
+      const patientRequests = requestsData.filter(req => {
+        return req.patient === patientId ||
+               req.patient?.id === patientId ||
+               req.patient_id === patientId ||
+               String(req.patient) === String(patientId);
+      });
+
+      console.log('Patient requests filtered:', patientRequests.length);
+
+      setEmergencyRequests(patientRequests);
+      setError('');
     } catch (error) {
       console.error('Error fetching emergency requests:', error);
       setError(error.message || 'Unable to load emergency requests. The service may be temporarily unavailable.');
       setEmergencyRequests([]);
+    } finally {
+      setLoading(false);
     }
   };
 
   const applyFilters = () => {
     let filtered = [...emergencyRequests];
+
     if (filters.status !== 'all') {
       filtered = filtered.filter(request => request.status === filters.status);
     }
+
     if (filters.urgency !== 'all') {
       filtered = filtered.filter(request => request.urgency_level === filters.urgency);
     }
+
     if (filters.approval !== 'all') {
       filtered = filtered.filter(request => request.approval_status === filters.approval);
     }
+
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
       filtered = filtered.filter(request =>
@@ -126,6 +170,7 @@ const PatientEmergencyPage = () => {
         request.id.toString().includes(searchTerm)
       );
     }
+
     setFilteredRequests(filtered);
     setCurrentPage(1);
   };
@@ -136,17 +181,21 @@ const PatientEmergencyPage = () => {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
+
     const sorted = [...filteredRequests].sort((a, b) => {
       let aValue = a[key];
       let bValue = b[key];
+
       if (key === 'request_time') {
         aValue = new Date(a.request_time);
         bValue = new Date(b.request_time);
       }
+
       if (aValue < bValue) return direction === 'asc' ? -1 : 1;
       if (aValue > bValue) return direction === 'asc' ? 1 : -1;
       return 0;
     });
+
     setFilteredRequests(sorted);
   };
 
@@ -155,7 +204,9 @@ const PatientEmergencyPage = () => {
       alert('Geolocation is not supported by this browser');
       return;
     }
+
     setGettingLocation(true);
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
@@ -183,10 +234,13 @@ const PatientEmergencyPage = () => {
       alert('Please fill in location and medical condition fields');
       return;
     }
+
     setCreating(true);
+
     try {
       const currentUser = authAPI.getCurrentUser();
       let patientId = currentUser?.patient_id || currentUser?.id;
+
       const requestData = {
         patient: patientId,
         location: formData.location.trim(),
@@ -197,7 +251,11 @@ const PatientEmergencyPage = () => {
         ...(formData.clinic && { clinic: parseInt(formData.clinic) }),
         ...(formData.gps_coordinates && { gps_coordinates: formData.gps_coordinates.trim() })
       };
+
+      console.log('Submitting request data:', requestData);
+
       await healthcareAPI.emergencies.create(requestData);
+
       setShowCreateForm(false);
       setFormData({
         clinic: '',
@@ -208,8 +266,10 @@ const PatientEmergencyPage = () => {
         urgency_level: 'standard',
         additional_notes: ''
       });
+
       await fetchEmergencyRequests();
       alert('Emergency request submitted successfully!');
+
     } catch (error) {
       console.error('Error submitting emergency request:', error);
       alert(error.message || 'Failed to submit emergency request. Please try again or call 911 directly.');
@@ -227,14 +287,22 @@ const PatientEmergencyPage = () => {
     if (approvalStatus === 'rejected') {
       return <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full border border-red-200">Rejected</span>;
     }
+
     const statusMap = {
       'P': { text: 'Pending Review', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+      'pending': { text: 'Pending Review', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
       'D': { text: 'Dispatched', color: 'bg-blue-100 text-blue-800 border-blue-200' },
+      'dispatched': { text: 'Dispatched', color: 'bg-blue-100 text-blue-800 border-blue-200' },
       'A': { text: 'Arrived', color: 'bg-purple-100 text-purple-800 border-purple-200' },
+      'arrived': { text: 'Arrived', color: 'bg-purple-100 text-purple-800 border-purple-200' },
       'T': { text: 'In Transit', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-      'C': { text: 'Completed', color: 'bg-green-100 text-green-800 border-green-200' }
+      'in_transit': { text: 'In Transit', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+      'C': { text: 'Completed', color: 'bg-green-100 text-green-800 border-green-200' },
+      'completed': { text: 'Completed', color: 'bg-green-100 text-green-800 border-green-200' }
     };
+
     const statusInfo = statusMap[status] || { text: 'Unknown', color: 'bg-gray-100 text-gray-800 border-gray-200' };
+
     return (
       <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${statusInfo.color}`}>
         {statusInfo.text}
@@ -249,7 +317,9 @@ const PatientEmergencyPage = () => {
       'standard': { text: 'STANDARD', color: 'bg-blue-100 text-blue-800 border-blue-200' },
       'non_urgent': { text: 'LOW', color: 'bg-green-100 text-green-800 border-green-200' }
     };
+
     const urgencyInfo = urgencyMap[urgency] || urgencyMap['standard'];
+
     return (
       <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${urgencyInfo.color}`}>
         {urgencyInfo.text}
@@ -259,9 +329,16 @@ const PatientEmergencyPage = () => {
 
   const getStatistics = () => {
     const total = emergencyRequests.length;
-    const pending = emergencyRequests.filter(r => r.approval_status === 'pending').length;
-    const active = emergencyRequests.filter(r => ['D', 'A', 'T'].includes(r.status)).length;
-    const completed = emergencyRequests.filter(r => r.status === 'C').length;
+    const pending = emergencyRequests.filter(r =>
+      r.approval_status === 'pending' || r.status === 'P' || r.status === 'pending'
+    ).length;
+    const active = emergencyRequests.filter(r =>
+      ['D', 'A', 'T', 'dispatched', 'arrived', 'in_transit'].includes(r.status)
+    ).length;
+    const completed = emergencyRequests.filter(r =>
+      r.status === 'C' || r.status === 'completed'
+    ).length;
+
     return { total, pending, active, completed };
   };
 
@@ -286,6 +363,7 @@ const PatientEmergencyPage = () => {
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto mb-4"></div>
             <p className="text-gray-600">Loading emergency requests...</p>
+            <p className="text-sm text-gray-500 mt-2">Fetching your emergency request history</p>
           </div>
         </div>
       </DashboardLayout>
@@ -323,6 +401,19 @@ const PatientEmergencyPage = () => {
               Request Emergency Ambulance
             </button>
           </div>
+        </div>
+        {/* Debug Information */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="font-semibold text-blue-800">Debug Info (Remove in production):</h3>
+          <p className="text-blue-700">
+            Total Emergency Requests Found: {emergencyRequests.length}
+          </p>
+          <p className="text-blue-700">
+            Current User: {authAPI.getCurrentUser()?.email || 'Not logged in'}
+          </p>
+          <p className="text-blue-700">
+            Patient ID: {authAPI.getCurrentUser()?.patient_id || authAPI.getCurrentUser()?.id || 'Not found'}
+          </p>
         </div>
         {/* Emergency Notice */}
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -536,58 +627,26 @@ const PatientEmergencyPage = () => {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {currentRequests.map((request) => (
                       <tr key={request.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">#{request.id}</div>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {request.id}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">
-                            {new Date(request.request_time).toLocaleDateString()}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {new Date(request.request_time).toLocaleTimeString()}
-                          </div>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {new Date(request.request_time).toLocaleString()}
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-gray-900 max-w-xs truncate" title={request.location}>
-                            {request.location}
-                          </div>
-                          {request.clinic_name && (
-                            <div className="text-xs text-blue-600 truncate">
-                              {request.clinic_name}
-                            </div>
-                          )}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {request.location}
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-gray-900 max-w-xs truncate" title={request.condition_description}>
-                            {request.condition_description}
-                          </div>
-                          {request.suspected_disease && (
-                            <div className="text-xs text-gray-500 truncate">
-                              Suspected: {request.suspected_disease}
-                            </div>
-                          )}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {request.condition_description}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {getUrgencyBadge(request.urgency_level)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {getStatusBadge(request.status, request.approval_status)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {request.assigned_ambulance ? (
-                            <div>
-                              <div className="text-sm font-medium text-gray-900">
-                                {request.assigned_ambulance}
-                              </div>
-                              {request.hospital_destination && (
-                                <div className="text-xs text-gray-500 truncate max-w-32">
-                                  → {request.hospital_destination}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-sm text-gray-500">Not assigned</span>
-                          )}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {request.assigned_ambulance || 'Not assigned'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                           <button
@@ -696,7 +755,7 @@ const PatientEmergencyPage = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                     >
                       <option value="">Select a clinic (optional)</option>
-                      {clinics.map((clinic) => (
+                      {Array.isArray(clinics) && clinics.map((clinic) => (
                         <option key={clinic.id} value={clinic.id}>
                           {clinic.name} - {clinic.address}
                         </option>
@@ -858,6 +917,7 @@ const PatientEmergencyPage = () => {
                         </div>
                       </div>
                     </div>
+                    {/* Location Details */}
                     <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-lg border border-green-200">
                       <h3 className="flex items-center gap-2 font-semibold text-green-800 mb-4">
                         <MapPin className="w-5 h-5" />
@@ -915,22 +975,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-                        {!selectedRequest.gps_coordinates && (
-                          <div>
-                            <span className="font-medium text-green-700 block mb-2">Map Search:</span>
-                            <button
-                              onClick={() => {
-                                const searchQuery = encodeURIComponent(selectedRequest.location);
-                                const googleMapsUrl = `https://www.google.com/maps/search/${searchQuery}`;
-                                window.open(googleMapsUrl, '_blank');
-                              }}
-                              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
-                            >
-                              <MapPin className="w-4 h-4" />
-                              Search on Google Maps
-                            </button>
-                          </div>
-                        )}
                         {selectedRequest.clinic_name && (
                           <div>
                             <span className="font-medium text-green-700 block mb-1">Preferred Clinic:</span>
@@ -941,6 +985,7 @@ const PatientEmergencyPage = () => {
                         )}
                       </div>
                     </div>
+                    {/* Medical Information */}
                     <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-lg border border-purple-200">
                       <h3 className="flex items-center gap-2 font-semibold text-purple-800 mb-4">
                         <Activity className="w-5 h-5" />
@@ -973,6 +1018,7 @@ const PatientEmergencyPage = () => {
                     </div>
                   </div>
                   <div className="space-y-6">
+                    {/* Status Timeline */}
                     <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-lg border border-gray-200">
                       <h3 className="flex items-center gap-2 font-semibold text-gray-800 mb-4">
                         <Clock className="w-5 h-5" />
@@ -1010,9 +1056,6 @@ const PatientEmergencyPage = () => {
                               <p className="text-sm text-gray-600">
                                 {new Date(selectedRequest.dispatched_at).toLocaleString()}
                               </p>
-                              {selectedRequest.dispatched_by_name && (
-                                <p className="text-xs text-gray-500">By: {selectedRequest.dispatched_by_name}</p>
-                              )}
                             </div>
                           </div>
                         )}
@@ -1027,17 +1070,6 @@ const PatientEmergencyPage = () => {
                             </div>
                           </div>
                         )}
-                        {selectedRequest.in_transit_at && (
-                          <div className="flex items-start gap-3">
-                            <div className="w-4 h-4 bg-indigo-500 rounded-full flex-shrink-0 mt-1"></div>
-                            <div>
-                              <p className="font-medium text-gray-900">In Transit to Hospital</p>
-                              <p className="text-sm text-gray-600">
-                                {new Date(selectedRequest.in_transit_at).toLocaleString()}
-                              </p>
-                            </div>
-                          </div>
-                        )}
                         {selectedRequest.completed_at && (
                           <div className="flex items-start gap-3">
                             <div className="w-4 h-4 bg-green-600 rounded-full flex-shrink-0 mt-1"></div>
@@ -1046,14 +1078,12 @@ const PatientEmergencyPage = () => {
                               <p className="text-sm text-gray-600">
                                 {new Date(selectedRequest.completed_at).toLocaleString()}
                               </p>
-                              {selectedRequest.completed_by_name && (
-                                <p className="text-xs text-gray-500">By: {selectedRequest.completed_by_name}</p>
-                              )}
                             </div>
                           </div>
                         )}
                       </div>
                     </div>
+                    {/* Ambulance Information */}
                     {selectedRequest.assigned_ambulance && (
                       <div className="bg-gradient-to-br from-blue-50 to-indigo-100 p-6 rounded-lg border border-blue-200">
                         <h3 className="flex items-center gap-2 font-semibold text-blue-800 mb-4">
@@ -1089,32 +1119,6 @@ const PatientEmergencyPage = () => {
                         </div>
                       </div>
                     )}
-                    {selectedRequest.approval_status === 'rejected' && (
-                      <div className="bg-gradient-to-br from-red-50 to-red-100 p-6 rounded-lg border border-red-200">
-                        <h3 className="flex items-center gap-2 font-semibold text-red-800 mb-4">
-                          <X className="w-5 h-5" />
-                          Rejection Information
-                        </h3>
-                        <div className="space-y-3">
-                          {selectedRequest.rejection_reason && (
-                            <div>
-                              <span className="font-medium text-red-700 block mb-1">Reason:</span>
-                              <div className="bg-white bg-opacity-60 p-3 rounded border">
-                                <p className="text-red-900">{selectedRequest.rejection_reason}</p>
-                              </div>
-                            </div>
-                          )}
-                          {selectedRequest.approval_comments && (
-                            <div>
-                              <span className="font-medium text-red-700 block mb-1">Comments:</span>
-                              <div className="bg-white bg-opacity-60 p-3 rounded border">
-                                <p className="text-red-900">{selectedRequest.approval_comments}</p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
                     {/* Quick Actions */}
                     <div className="bg-gradient-to-br from-yellow-50 to-orange-100 p-6 rounded-lg border border-yellow-200">
                       <h3 className="flex items-center gap-2 font-semibold text-yellow-800 mb-4">
@@ -1132,7 +1136,6 @@ const PatientEmergencyPage = () => {
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => {
-                              const coords = selectedRequest.gps_coordinates || selectedRequest.location;
                               const message = `Emergency at: ${selectedRequest.location}. Condition: ${selectedRequest.condition_description}`;
                               const smsUrl = `sms:?body=${encodeURIComponent(message)}`;
                               window.open(smsUrl, '_self');

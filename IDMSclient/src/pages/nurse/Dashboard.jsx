@@ -1,89 +1,43 @@
-// src/pages/nurse/Dashboard.jsx
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { healthcareAPI, authAPI, apiUtils } from '../../services/api';
+import { healthcareAPI, authAPI } from '../../services/api';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import {
-  Calendar,
-  Clock,
-  Users,
-  AlertTriangle,
-  CheckCircle,
-  Bell,
-  Activity,
-  Heart,
-  Stethoscope,
-  ClipboardList,
-  UserCheck,
-  MessageSquare,
-  TrendingUp,
-  ArrowRight,
-  RefreshCw,
-  Plus,
-  Eye,
-  Edit,
-  Phone,
-  Mail,
-  MapPin,
-  Star,
-  Award,
-  Target,
-  Zap,
-  Shield,
-  FileText,
-  BarChart3
+  Calendar, Clock, Phone, AlertTriangle, CheckCircle, Users, UserPlus, 
+  UserCheck, RefreshCw, FileText, Activity, TrendingUp
 } from 'lucide-react';
 
-const NurseDashboard = () => {
+const NurseReceptionistDashboard = () => {
   const [loading, setLoading] = useState(true);
-  const [dashboardData, setDashboardData] = useState({
-    appointments: [],
-    todayStats: {
-      totalAppointments: 0,
-      pendingApprovals: 0,
-      checkedInPatients: 0,
-      emergencyIntakes: 0,
-      completedTasks: 0
-    },
-    recentActivities: [],
-    urgentTasks: [],
-    patientAlerts: []
+  const [stats, setStats] = useState({
+    totalAppointments: 0,
+    pendingAppointments: 0,
+    approvedAppointments: 0,
+    emergencyRequests: 0,
+    completedToday: 0
   });
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   
   const navigate = useNavigate();
   const currentUser = authAPI.getCurrentUser();
 
   useEffect(() => {
     fetchDashboardData();
-    
-    // Update time every minute
-    const timeInterval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 60000);
-
-    // Refresh dashboard data every 5 minutes
-    const dataInterval = setInterval(fetchDashboardData, 5 * 60 * 1000);
-
-    return () => {
-      clearInterval(timeInterval);
-      clearInterval(dataInterval);
-    };
   }, []);
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       
-      // Fetch appointments and related data
-      const [appointmentsResponse] = await Promise.allSettled([
+      const [appointmentsRes, emergencyRes] = await Promise.allSettled([
         healthcareAPI.appointments.list(),
-        // Add other API calls as needed
+        healthcareAPI.emergencies?.list().catch(() => ({ data: [] }))
       ]);
 
-      const appointments = appointmentsResponse.status === 'fulfilled' 
-        ? (appointmentsResponse.value.data.results || appointmentsResponse.value.data || [])
-        : [];
+      const appointments = appointmentsRes.status === 'fulfilled' ? 
+        (appointmentsRes.value?.data?.results || appointmentsRes.value?.data || []) : [];
+      const emergencies = emergencyRes.status === 'fulfilled' ? 
+        (emergencyRes.value?.data?.results || emergencyRes.value?.data || []) : [];
 
       // Calculate today's stats
       const today = new Date().toDateString();
@@ -91,79 +45,24 @@ const NurseDashboard = () => {
         new Date(apt.appointment_date).toDateString() === today
       );
 
-      const stats = {
+      setStats({
         totalAppointments: todayAppointments.length,
-        pendingApprovals: appointments.filter(apt => apt.status === 'P').length,
-        checkedInPatients: todayAppointments.filter(apt => apt.status === 'A').length,
-        emergencyIntakes: 2, // Mock data - replace with real emergency data
-        completedTasks: todayAppointments.filter(apt => apt.status === 'D').length
-      };
-
-      // Generate mock urgent tasks and activities
-      const urgentTasks = [
-        {
-          id: 1,
-          type: 'approval',
-          title: 'Appointment Approval Needed',
-          description: 'John Doe - Emergency consultation request',
-          priority: 'high',
-          time: '10 minutes ago',
-          action: () => navigate('/nurse/appointments?filter=pending')
-        },
-        {
-          id: 2,
-          type: 'vitals',
-          title: 'Vital Signs Recording',
-          description: 'Room 205 - Patient waiting for vitals check',
-          priority: 'medium',
-          time: '15 minutes ago',
-          action: () => navigate('/nurse/vitals')
-        },
-        {
-          id: 3,
-          type: 'medication',
-          title: 'Medication Administration',
-          description: 'Sarah Johnson - Pain medication due',
-          priority: 'high',
-          time: '5 minutes ago',
-          action: () => navigate('/nurse/medications')
-        }
-      ];
-
-      const recentActivities = [
-        {
-          id: 1,
-          type: 'appointment',
-          message: 'Approved appointment for Maria Garcia',
-          time: '2 hours ago',
-          icon: CheckCircle,
-          color: 'text-green-600'
-        },
-        {
-          id: 2,
-          type: 'patient',
-          message: 'Checked in patient Robert Smith',
-          time: '3 hours ago',
-          icon: UserCheck,
-          color: 'text-blue-600'
-        },
-        {
-          id: 3,
-          type: 'emergency',
-          message: 'Processed emergency intake',
-          time: '4 hours ago',
-          icon: AlertTriangle,
-          color: 'text-red-600'
-        }
-      ];
-
-      setDashboardData({
-        appointments,
-        todayStats: stats,
-        recentActivities,
-        urgentTasks,
-        patientAlerts: []
+        pendingAppointments: appointments.filter(apt => apt.status === 'P').length,
+        approvedAppointments: appointments.filter(apt => apt.status === 'A').length,
+        emergencyRequests: emergencies.filter(e => 
+          e.status === 'P' || e.approval_status === 'pending'
+        ).length,
+        completedToday: todayAppointments.filter(apt => apt.status === 'D').length
       });
+
+      // Get next 3 upcoming appointments
+      const now = new Date();
+      const upcoming = appointments
+        .filter(apt => new Date(apt.appointment_date) > now && apt.status === 'A')
+        .sort((a, b) => new Date(a.appointment_date) - new Date(b.appointment_date))
+        .slice(0, 3);
+      
+      setUpcomingAppointments(upcoming);
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -172,87 +71,64 @@ const NurseDashboard = () => {
     }
   };
 
-  const formatTime = (date) => {
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  const formatDate = (date) => {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
-
-  const getPriorityColor = (priority) => {
-    switch (priority) {
-      case 'high': return 'bg-red-100 text-red-800 border-red-200';
-      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'low': return 'bg-green-100 text-green-800 border-green-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
   const quickActions = [
     {
-      title: 'Approve Appointments',
-      description: 'Review pending appointment requests',
+      title: 'Manage Appointments',
       icon: Calendar,
-      color: 'bg-blue-500',
-      badge: dashboardData.todayStats.pendingApprovals,
-      action: () => navigate('/nurse/appointments?filter=pending_approval')
+      color: 'bg-blue-600',
+      badge: stats.pendingAppointments,
+      action: () => navigate('/nurse/appointments')
     },
     {
-      title: 'Patient Check-in',
-      description: 'Check in arriving patients',
-      icon: UserCheck,
-      color: 'bg-green-500',
-      action: () => navigate('/nurse/patients?action=checkin')
-    },
-    {
-      title: 'Emergency Intake',
-      description: 'Process emergency patients',
+      title: 'Emergency Requests',
       icon: AlertTriangle,
-      color: 'bg-red-500',
-      badge: dashboardData.todayStats.emergencyIntakes,
+      color: 'bg-red-600',
+      badge: stats.emergencyRequests,
       action: () => navigate('/nurse/emergency')
     },
     {
-      title: 'Vital Signs',
-      description: 'Record patient vitals',
-      icon: Activity,
-      color: 'bg-purple-500',
-      action: () => navigate('/nurse/vitals')
+      title: 'Patient Check-in',
+      icon: UserCheck,
+      color: 'bg-green-600',
+      action: () => navigate('/nurse/checkin')
     },
     {
-      title: 'Medication Admin',
-      description: 'Administer medications',
-      icon: Heart,
-      color: 'bg-pink-500',
-      action: () => navigate('/nurse/medications')
+      title: 'New Registration',
+      icon: UserPlus,
+      color: 'bg-purple-600',
+      action: () => navigate('/nurse/registration')
     },
     {
-      title: 'Care Coordination',
-      description: 'Coordinate patient care',
-      icon: MessageSquare,
-      color: 'bg-indigo-500',
-      action: () => navigate('/nurse/coordination')
+      title: 'Reports',
+      icon: FileText,
+      color: 'bg-teal-600',
+      action: () => navigate('/nurse/reports')
+    },
+    {
+      title: 'Directory',
+      icon: Phone,
+      color: 'bg-indigo-600',
+      action: () => navigate('/nurse/directory')
     }
   ];
+
+  const StatCard = ({ title, value, icon: Icon, color }) => (
+    <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-gray-600">{title}</p>
+          <p className={`text-2xl font-bold ${color}`}>{value}</p>
+        </div>
+        <Icon className={`h-8 w-8 ${color.replace('text-', 'text-').replace('-600', '-500')}`} />
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-12 h-12 border-4 border-green-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading nurse dashboard...</p>
-          </div>
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
       </DashboardLayout>
     );
@@ -260,245 +136,126 @@ const NurseDashboard = () => {
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header Section */}
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                  Good {currentTime.getHours() < 12 ? 'Morning' : currentTime.getHours() < 18 ? 'Afternoon' : 'Evening'}, {currentUser?.first_name}!
-                </h1>
-                <p className="text-gray-600">{formatDate(currentTime)}</p>
-                <div className="flex items-center gap-4 mt-2">
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <Clock className="h-4 w-4" />
-                    <span>Current Time: {formatTime(currentTime)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-green-600">
-                    <Zap className="h-4 w-4" />
-                    <span>Active Shift</span>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 lg:mt-0 flex gap-3">
-                <button
-                  onClick={fetchDashboardData}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Refresh
-                </button>
-                <button
-                  onClick={() => navigate('/nurse/appointments')}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  <Calendar className="h-4 w-4" />
-                  Manage Appointments
-                </button>
-              </div>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-100">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Reception Dashboard</h1>
+              <p className="text-gray-600 mt-1">
+                Welcome back, {currentUser?.first_name}! Manage appointments and emergency requests.
+              </p>
             </div>
+            <button
+              onClick={fetchDashboardData}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
           </div>
+        </div>
 
-          {/* Today's Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <div className="flex items-center gap-3">
-                <div className="bg-blue-100 p-2 rounded-lg">
-                  <Calendar className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Today's Appointments</p>
-                  <p className="text-2xl font-semibold text-gray-900">{dashboardData.todayStats.totalAppointments}</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <div className="flex items-center gap-3">
-                <div className="bg-yellow-100 p-2 rounded-lg">
-                  <Clock className="h-5 w-5 text-yellow-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Pending Approvals</p>
-                  <p className="text-2xl font-semibold text-gray-900">{dashboardData.todayStats.pendingApprovals}</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <div className="flex items-center gap-3">
-                <div className="bg-green-100 p-2 rounded-lg">
-                  <UserCheck className="h-5 w-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Checked In</p>
-                  <p className="text-2xl font-semibold text-gray-900">{dashboardData.todayStats.checkedInPatients}</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <div className="flex items-center gap-3">
-                <div className="bg-red-100 p-2 rounded-lg">
-                  <AlertTriangle className="h-5 w-5 text-red-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Emergency Intakes</p>
-                  <p className="text-2xl font-semibold text-gray-900">{dashboardData.todayStats.emergencyIntakes}</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-sm p-4">
-              <div className="flex items-center gap-3">
-                <div className="bg-purple-100 p-2 rounded-lg">
-                  <Target className="h-5 w-5 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-sm text-gray-600">Completed Tasks</p>
-                  <p className="text-2xl font-semibold text-gray-900">{dashboardData.todayStats.completedTasks}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+        {/* Key Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <StatCard title="Today's Appointments" value={stats.totalAppointments} icon={Calendar} color="text-blue-600" />
+          <StatCard title="Pending Approval" value={stats.pendingAppointments} icon={Clock} color="text-orange-600" />
+          <StatCard title="Approved" value={stats.approvedAppointments} icon={CheckCircle} color="text-green-600" />
+          <StatCard title="Emergency Requests" value={stats.emergencyRequests} icon={AlertTriangle} color="text-red-600" />
+          <StatCard title="Completed Today" value={stats.completedToday} icon={Activity} color="text-purple-600" />
+        </div>
 
-          {/* Quick Actions */}
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {quickActions.map((action, index) => (
-                <button
-                  key={index}
-                  onClick={action.action}
-                  className="relative p-4 border border-gray-200 rounded-lg hover:shadow-md transition-all duration-200 text-left group"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-lg ${action.color} text-white`}>
-                      <action.icon className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors">
-                        {action.title}
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1">{action.description}</p>
-                    </div>
-                    {action.badge && action.badge > 0 && (
-                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center">
-                        {action.badge}
-                      </span>
-                    )}
+        {/* Quick Actions */}
+        <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {quickActions.map((action, index) => (
+              <button
+                key={index}
+                onClick={action.action}
+                className="relative p-4 border border-gray-200 rounded-lg hover:shadow-md transition-all text-left group"
+              >
+                <div className="flex flex-col items-center text-center">
+                  <div className={`p-3 rounded-lg ${action.color} text-white mb-2`}>
+                    <action.icon className="h-6 w-6" />
                   </div>
-                  <ArrowRight className="h-4 w-4 text-gray-400 group-hover:text-blue-600 transition-colors mt-2" />
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Urgent Tasks */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Urgent Tasks</h2>
-                <Bell className="h-5 w-5 text-gray-400" />
-              </div>
-              
-              {dashboardData.urgentTasks.length === 0 ? (
-                <div className="text-center py-8">
-                  <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-3" />
-                  <p className="text-gray-600">All caught up! No urgent tasks.</p>
+                  <h3 className="font-medium text-gray-900 text-sm">{action.title}</h3>
+                  {action.badge && action.badge > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center">
+                      {action.badge}
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {dashboardData.urgentTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={task.action}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-medium text-gray-900">{task.title}</h3>
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getPriorityColor(task.priority)}`}>
-                              {task.priority}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-600">{task.description}</p>
-                          <p className="text-xs text-gray-500 mt-1">{task.time}</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-gray-400 flex-shrink-0 ml-2" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Upcoming Appointments & Today's Summary */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Upcoming Appointments */}
+          <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Upcoming Appointments</h2>
+            {upcomingAppointments.length === 0 ? (
+              <div className="text-center py-8">
+                <Calendar className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-600">No upcoming appointments</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {upcomingAppointments.map((appointment) => (
+                  <div key={appointment.id} className="p-3 border border-gray-200 rounded-lg">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {appointment.patient_name || 'Patient Name'}
+                        </p>
+                        <p className="text-sm text-gray-600">{appointment.reason || 'General Consultation'}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(appointment.appointment_date).toLocaleString()}
+                        </p>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Recent Activities */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Recent Activities</h2>
-                <Activity className="h-5 w-5 text-gray-400" />
-              </div>
-              
-              <div className="space-y-4">
-                {dashboardData.recentActivities.map((activity) => (
-                  <div key={activity.id} className="flex items-start gap-3">
-                    <div className={`p-1 rounded-full ${activity.color}`}>
-                      <activity.icon className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm text-gray-900">{activity.message}</p>
-                      <p className="text-xs text-gray-500">{activity.time}</p>
+                      <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                        Approved
+                      </span>
                     </div>
                   </div>
                 ))}
-                
-                <button
-                  onClick={() => navigate('/nurse/reports')}
-                  className="w-full text-center py-2 text-sm text-blue-600 hover:text-blue-700 transition-colors"
-                >
-                  View All Activities
-                </button>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* Performance Metrics */}
-          <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
+          {/* Today's Performance */}
+          <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Today's Performance</h2>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mb-2">
-                  <Award className="h-6 w-6 text-green-600" />
-                </div>
-                <p className="text-sm text-gray-600">Efficiency Rate</p>
-                <p className="text-xl font-semibold text-gray-900">94%</p>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Appointment Efficiency</span>
+                <span className="font-semibold text-green-600">
+                  {stats.totalAppointments > 0 ? 
+                    Math.round((stats.completedToday / stats.totalAppointments) * 100) : 0}%
+                </span>
               </div>
-              
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-100 rounded-full mb-2">
-                  <Star className="h-6 w-6 text-blue-600" />
-                </div>
-                <p className="text-sm text-gray-600">Patient Satisfaction</p>
-                <p className="text-xl font-semibold text-gray-900">4.8/5</p>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Pending Tasks</span>
+                <span className="font-semibold text-orange-600">
+                  {stats.pendingAppointments + stats.emergencyRequests}
+                </span>
               </div>
-              
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-12 h-12 bg-purple-100 rounded-full mb-2">
-                  <TrendingUp className="h-6 w-6 text-purple-600" />
-                </div>
-                <p className="text-sm text-gray-600">Tasks Completed</p>
-                <p className="text-xl font-semibold text-gray-900">18/20</p>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Total Processed</span>
+                <span className="font-semibold text-blue-600">
+                  {stats.completedToday + stats.approvedAppointments}
+                </span>
               </div>
-              
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-12 h-12 bg-orange-100 rounded-full mb-2">
-                  <Shield className="h-6 w-6 text-orange-600" />
+              <div className="pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Overall Status</span>
+                  <div className="flex items-center space-x-2">
+                    <TrendingUp className="h-4 w-4 text-green-500" />
+                    <span className="text-sm font-medium text-green-600">Excellent</span>
+                  </div>
                 </div>
-                <p className="text-sm text-gray-600">Safety Score</p>
-                <p className="text-xl font-semibold text-gray-900">Excellent</p>
               </div>
             </div>
           </div>
@@ -508,4 +265,4 @@ const NurseDashboard = () => {
   );
 };
 
-export default NurseDashboard;
+export default NurseReceptionistDashboard;

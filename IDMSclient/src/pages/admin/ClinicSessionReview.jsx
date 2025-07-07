@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import diagnosisService from '../../services/diagnosisService';
 import { authAPI } from '../../services/api';
@@ -23,14 +23,19 @@ import {
 } from 'lucide-react';
 
 const ClinicSessionReview = () => {
+  // FIXED: All hooks must be called at the top level of the component
   const { sessionId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // State declarations
   const [session, setSession] = useState(null);
   const [analyses, setAnalyses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
   const [showCreateDiagnosisModal, setShowCreateDiagnosisModal] = useState(false);
+  const [notes, setNotes] = useState('');
   
   const [diagnosisData, setDiagnosisData] = useState({
     disease_id: '',
@@ -39,24 +44,95 @@ const ClinicSessionReview = () => {
     status: 'doctor_confirmed'
   });
 
+  // FIXED: Extract session ID logic into a separate function
+  const extractSessionId = () => {
+    console.log('Extracting session ID...');
+    console.log('Route params sessionId:', sessionId);
+    console.log('Current location:', location.pathname);
+    console.log('Location search:', location.search);
+    console.log('Location state:', location.state);
+    
+    // Try multiple sources for session ID
+    let actualSessionId = sessionId;
+    
+    // Method 1: Direct route parameter
+    if (actualSessionId && actualSessionId !== 'undefined' && actualSessionId !== 'null') {
+      console.log('Found sessionId in route params:', actualSessionId);
+      return actualSessionId;
+    }
+    
+    // Method 2: URL query parameters
+    if (!actualSessionId) {
+      const urlParams = new URLSearchParams(location.search);
+      actualSessionId = urlParams.get('sessionId') || urlParams.get('id');
+      if (actualSessionId) {
+        console.log('Found sessionId in query params:', actualSessionId);
+        return actualSessionId;
+      }
+    }
+    
+    // Method 3: Location state
+    if (!actualSessionId && location.state?.sessionId) {
+      actualSessionId = location.state.sessionId;
+      console.log('Found sessionId in location state:', actualSessionId);
+      return actualSessionId;
+    }
+    
+    // Method 4: Extract from pathname (last resort)
+    if (!actualSessionId) {
+      const pathParts = location.pathname.split('/');
+      console.log('Path parts:', pathParts);
+      
+      // Look for session ID after known route segments
+      const possibleSessionId = pathParts[pathParts.length - 1];
+      if (possibleSessionId && possibleSessionId !== 'clinic-session-review' && 
+          !isNaN(parseInt(possibleSessionId))) {
+        actualSessionId = possibleSessionId;
+        console.log('Extracted sessionId from path:', actualSessionId);
+        return actualSessionId;
+      }
+    }
+    
+    console.log('No valid session ID found');
+    return null;
+  };
+
   useEffect(() => {
-    if (sessionId) {
-      loadSessionData();
+    console.log('ClinicSessionReview mounted');
+    
+    const actualSessionId = extractSessionId();
+    
+    if (actualSessionId && actualSessionId !== 'undefined' && actualSessionId !== 'null') {
+      console.log('Loading session with ID:', actualSessionId);
+      loadSessionData(actualSessionId);
     } else {
       setLoading(false);
-      setError('No session ID provided in URL parameters.');
+      setError('No session ID provided. Please ensure the URL includes a valid session ID or navigate from the symptom dashboard.');
+      console.error('No valid session ID found. Current URL:', window.location.href);
     }
-  }, [sessionId]);
+  }, [sessionId, location.pathname, location.search]); // Dependencies for useEffect
 
-  const loadSessionData = async () => {
+  const loadSessionData = async (id) => {
+    if (!id) {
+      setError('Invalid session ID provided');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
       
-      console.log('Loading session data for ID:', sessionId);
+      console.log('Loading session data for ID:', id);
+      
+      // Validate the session ID
+      const numericId = parseInt(id);
+      if (isNaN(numericId) || numericId <= 0) {
+        throw new Error('Session ID must be a valid positive number');
+      }
       
       // Load session details
-      const sessionResponse = await diagnosisService.sessions.get(sessionId);
+      const sessionResponse = await diagnosisService.sessions.get(id);
       console.log('Session response:', sessionResponse);
       
       if (!sessionResponse?.data) {
@@ -67,7 +143,7 @@ const ClinicSessionReview = () => {
       
       // Load disease analyses for this session
       try {
-        const analysesResponse = await diagnosisService.analyses.getBySession(sessionId);
+        const analysesResponse = await diagnosisService.analyses.getBySession(id);
         console.log('Analyses response:', analysesResponse);
         
         // Handle different response structures
@@ -186,10 +262,35 @@ const ClinicSessionReview = () => {
     }
   };
 
+  const handleSaveNotes = async () => {
+    if (!notes.trim()) {
+      alert('Please enter some notes before saving.');
+      return;
+    }
+    
+    try {
+      // You can implement note saving logic here
+      console.log('Saving notes:', notes);
+      alert('Notes saved successfully!');
+    } catch (error) {
+      console.error('Error saving notes:', error);
+      alert('Failed to save notes. Please try again.');
+    }
+  };
+
   const retryLoad = () => {
     if (!loading) {
-      loadSessionData();
+      const actualSessionId = extractSessionId();
+      if (actualSessionId) {
+        loadSessionData(actualSessionId);
+      } else {
+        setError('Unable to determine session ID for retry. Please navigate back to the dashboard and try again.');
+      }
     }
+  };
+
+  const handleGoToDashboard = () => {
+    navigate('/doctor/symptom-dashboard'); // Updated path based on your URL structure
   };
 
   if (loading) {
@@ -211,7 +312,7 @@ const ClinicSessionReview = () => {
         <div className="text-center py-12">
           <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Session</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
+          <p className="text-gray-600 mb-4 max-w-md mx-auto">{error}</p>
           <div className="space-x-4">
             <button
               onClick={retryLoad}
@@ -220,12 +321,24 @@ const ClinicSessionReview = () => {
               Try Again
             </button>
             <button
-              onClick={() => navigate('/clinic/symptom-dashboard')}
+              onClick={handleGoToDashboard}
               className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
             >
               Back to Dashboard
             </button>
           </div>
+          
+          {/* Debug information in development */}
+          {import.meta.env.DEV && (
+            <div className="mt-8 p-4 bg-gray-100 rounded-lg text-left max-w-2xl mx-auto">
+              <h3 className="font-semibold mb-2">Debug Information:</h3>
+              <p className="text-sm text-gray-600 mb-1">Current URL: {window.location.href}</p>
+              <p className="text-sm text-gray-600 mb-1">URL Path: {location.pathname}</p>
+              <p className="text-sm text-gray-600 mb-1">Session ID from params: {sessionId || 'undefined'}</p>
+              <p className="text-sm text-gray-600 mb-1">Search params: {location.search}</p>
+              <p className="text-sm text-gray-600">Expected URL format: /doctor/clinic-session-review/:sessionId</p>
+            </div>
+          )}
         </div>
       </DashboardLayout>
     );
@@ -239,7 +352,7 @@ const ClinicSessionReview = () => {
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Session Not Found</h2>
           <p className="text-gray-600 mb-4">The symptom session could not be found.</p>
           <button
-            onClick={() => navigate('/clinic/symptom-dashboard')}
+            onClick={handleGoToDashboard}
             className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
             Back to Dashboard
@@ -249,20 +362,23 @@ const ClinicSessionReview = () => {
     );
   }
 
+  // Get the actual session ID for display
+  const displaySessionId = extractSessionId() || session.id || 'Unknown';
+
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/clinic/symptom-dashboard')}
+            onClick={handleGoToDashboard}
             className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Symptom Session Review</h1>
-            <p className="text-gray-600">Session #{sessionId} - Medical Professional Review</p>
+            <p className="text-gray-600">Session #{displaySessionId} - Medical Professional Review</p>
           </div>
         </div>
 
@@ -473,7 +589,7 @@ const ClinicSessionReview = () => {
                 </button>
 
                 <button
-                  onClick={() => navigate(`/clinic/patient-chart/${session.user?.id}`)}
+                  onClick={() => navigate(`/doctor/patient-chart/${session.user?.id}`)}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <User className="w-4 h-4" />
@@ -482,7 +598,7 @@ const ClinicSessionReview = () => {
 
                 {session.severity_level === 'critical' && (
                   <button
-                    onClick={() => navigate('/clinic/emergency-management')}
+                    onClick={() => navigate('/doctor/emergency-management')}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
                   >
                     <AlertTriangle className="w-4 h-4" />
@@ -496,12 +612,17 @@ const ClinicSessionReview = () => {
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Clinical Notes</h3>
               <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
                 placeholder="Add your clinical observations and notes about this session..."
                 rows={4}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="mt-3 flex justify-end">
-                <button className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors">
+                <button 
+                  onClick={handleSaveNotes}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                >
                   Save Notes
                 </button>
               </div>

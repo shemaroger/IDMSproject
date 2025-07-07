@@ -20,7 +20,11 @@ import ClinicSymptomDashboard from './pages/admin/ClinicSymptomDashboard';
 import SymptomHistoryPage from './pages/patient/SymptomHistoryPage';
 import SymptomResultsPage from './pages/patient/SymptomResultsPage';
 import PreventionTipManagement from './pages/admin/PreventionTipManagement';
-
+import PatientPreventionTips from './pages/patient/PatientPreventionTips';
+import HealthTips from './pages/nurse/HealthTips';
+import RoleManagement from './pages/admin/RoleManagement';
+import AnalyticsReports from './pages/admin/AnalyticsReports';
+import ReportPage from './pages/nurse/ReportPage';
 
 // Provider pages
 import AppointmentManagement from './pages/nurse/AppointmentManagement';
@@ -36,6 +40,12 @@ import NurseAppointmentManagement from './pages/nurse/AppointmentManagement';
 // Admin pages
 import ClinicManagement from './pages/admin/ClinicManagement';
 import UserManagement from './pages/admin/UserManagement';
+
+// NEW: Medical Management Pages
+import MedicalTestsPage from './pages/admin/MedicalTestsPage';
+import TreatmentPlansPage from './pages/admin/TreatmentPlansPage';
+import TestResultsPage from './pages/admin/TestResultsPage';
+import DoctorCasesPage from './pages/admin/DoctorCasesPage';
 
 // Profile page
 import UserProfile from './pages/profile/UserProfile';
@@ -97,6 +107,13 @@ function App() {
                 <SymptomHistoryPage />
               </PatientRoute>
             } />
+
+            <Route path="/patient/prevention-tips" element={
+              <PatientRoute>
+                <PatientPreventionTips />
+              </PatientRoute>
+            } />
+
             <Route path="/patient/symptom-checker/results/:sessionId" element={
              <PatientRoute>
                 <SymptomResultsPage />
@@ -120,6 +137,27 @@ function App() {
             <Route path="/nurse/appointments" element={
               <NurseRoute>
                 <NurseAppointmentManagement />
+              </NurseRoute>
+            } />
+            <Route path="/nurse/prevention-tips" element={
+              <NurseRoute>
+                <HealthTips />
+              </NurseRoute>
+            } />
+            <Route path="/nurse/reports" element={
+              <NurseRoute>
+                <ReportPage />
+              </NurseRoute>
+            } />
+            {/* NEW: Medical Management for Nurses */}
+            <Route path="/nurse/test-results" element={
+              <NurseRoute>
+                <TestResultsPage />
+              </NurseRoute>
+            } />
+            <Route path="/nurse/medical-tests" element={
+              <NurseRoute>
+                <MedicalTestsPage />
               </NurseRoute>
             } />
             <Route path="/nurse/patients" element={
@@ -157,11 +195,6 @@ function App() {
                 <div>Care Coordination - Coming Soon</div>
               </NurseRoute>
             } />
-            <Route path="/nurse/reports" element={
-              <NurseRoute>
-                <div>Shift Reports - Coming Soon</div>
-              </NurseRoute>
-            } />
             <Route path="/nurse/settings" element={
               <NurseRoute>
                 <div>Nurse Settings - Coming Soon</div>
@@ -188,6 +221,27 @@ function App() {
                 <AppointmentManagement />
               </ProtectedRoute>
             } />
+            {/* NEW: Medical Management for Doctors */}
+            <Route path="/doctor/cases" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <DoctorCasesPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/treatment-plans" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <TreatmentPlansPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/test-results" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <TestResultsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/doctor/medical-tests" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <MedicalTestsPage />
+              </ProtectedRoute>
+            } />
             <Route path="/doctor/patients" element={
               <ProtectedRoute requiredRole="Doctor">
                 <div>Doctor Patient List - Coming Soon</div>
@@ -198,11 +252,28 @@ function App() {
                 <div>Medical Records - Coming Soon</div>
               </ProtectedRoute>
             } />
-            <Route path="/doctor/clinic-session-review" element={
+            
+            {/* FIXED: Added sessionId parameter to the route */}
+            <Route path="/doctor/clinic-session-review/:sessionId" element={
               <ProtectedRoute requiredRole="Doctor">
                 <ClinicSessionReview />
               </ProtectedRoute>
             } />
+            
+            {/* ADDED: Symptom dashboard route for doctors */}
+            <Route path="/doctor/symptom-dashboard" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ClinicSymptomDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* ADDED: Diagnosis review route for doctors */}
+            <Route path="/doctor/diagnosis-review/:diagnosisId" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <div>Diagnosis Review - Coming Soon</div>
+              </ProtectedRoute>
+            } />
+            
             <Route path="/doctor/emergencies" element={
               <ProtectedRoute requiredRole="Doctor">
                 <div>Emergency Cases - Coming Soon</div>
@@ -223,13 +294,19 @@ function App() {
                 <ClinicDiseaseConfirmation />
               </ProtectedRoute>
             } />
+            
+            {/* DEPRECATED: Old route without parameter - redirect to dashboard */}
+            <Route path="/doctor/clinic-session-review" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <Navigate to="/doctor/symptom-dashboard" replace />
+              </ProtectedRoute>
+            } />
+            
             <Route path="/doctor/clinic-symptoms-check" element={
               <ProtectedRoute requiredRole="Doctor">
                 <ClinicSymptomDashboard />
               </ProtectedRoute>
             } />
-
-
             <Route path="/doctor/reports" element={
               <ProtectedRoute requiredRole="Doctor">
                 <div>Clinical Reports - Coming Soon</div>
@@ -309,6 +386,11 @@ function App() {
                 <UserManagement />
               </AdminRoute>
             } />
+            <Route path="/admin/roles" element={
+              <AdminRoute>
+                <RoleManagement />
+              </AdminRoute>
+            } />
             <Route path="/admin/clinic" element={
               <AdminRoute>
                 <ClinicManagement />
@@ -322,6 +404,45 @@ function App() {
             <Route path="/admin/prevention-tips" element={
               <AdminRoute>
                 <PreventionTipManagement />
+              </AdminRoute>
+            } />
+            <Route path="/admin/analytics" element={
+              <AdminRoute>
+                <AnalyticsReports />
+              </AdminRoute>
+            } />
+            
+            {/* ADMIN: Symptom monitoring routes */}
+            <Route path="/admin/symptom-dashboard" element={
+              <AdminRoute>
+                <ClinicSymptomDashboard />
+              </AdminRoute>
+            } />
+            <Route path="/admin/session-review/:sessionId" element={
+              <AdminRoute>
+                <ClinicSessionReview />
+              </AdminRoute>
+            } />
+            <Route path="/admin/diagnosis-review/:diagnosisId" element={
+              <AdminRoute>
+                <div>Admin Diagnosis Review - Coming Soon</div>
+              </AdminRoute>
+            } />
+            
+            {/* NEW: Medical Management for Admins */}
+            <Route path="/admin/medical-tests" element={
+              <AdminRoute>
+                <MedicalTestsPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/treatment-plans" element={
+              <AdminRoute>
+                <TreatmentPlansPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/test-results" element={
+              <AdminRoute>
+                <TestResultsPage />
               </AdminRoute>
             } />
             

@@ -17,8 +17,13 @@ from collections import Counter
 from django.contrib.auth import authenticate, login, logout
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+import logging
 from .models import *
 from .serializers import *
+from .mixins import NotificationMixinn
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 # ======================== PERMISSION CLASSES ========================
 class IsAdmin(permissions.BasePermission):
@@ -560,7 +565,7 @@ class ClinicViewSet(viewsets.ModelViewSet):
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAuthenticated]
 
 class UserProfileViewSet(viewsets.ModelViewSet):
     queryset = UserProfile.objects.all()
@@ -715,7 +720,7 @@ from datetime import datetime, timedelta
 from .models import Appointment, Clinic, User, DoctorSchedule
 from .serializers import AppointmentCreateSerializer, AppointmentUpdateSerializer, AppointmentSerializer
 
-class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
+class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixinn):
     queryset = Appointment.objects.select_related(
         'patient', 'healthcare_provider__role', 'clinic'
     ).prefetch_related('patient__profile', 'healthcare_provider__profile')
@@ -737,213 +742,24 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         queryset = self.queryset
         
         if user.role.name == 'Patient':
-            # Patients see only their own appointments
             queryset = queryset.filter(patient=user)
         elif user.role.name == 'Doctor':
-            # Doctors see appointments assigned to them
             queryset = queryset.filter(healthcare_provider=user)
         elif user.role.name == 'Nurse':
-            # FIXED: Nurses see appointments at their clinics (not assigned to them)
             nurse_clinics = user.clinics.all()
             queryset = queryset.filter(clinic__in=nurse_clinics)
-        # Admins see all appointments (no additional filtering)
         
         return queryset
 
-    # ======================== CLINIC-FIRST FLOW ACTIONS ========================
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def available_clinics(self, request):
-        """Get all available clinics for appointment booking"""
-        from django.db.models import Count, Q
-        
-        clinics = Clinic.objects.filter(is_public=True).annotate(
-            doctors_count=Count('staff', filter=Q(staff__role__name='Doctor')),
-            nurses_count=Count('staff', filter=Q(staff__role__name='Nurse'))
-        ).order_by('name')
-        
-        from .serializers import ClinicSerializer
-        serializer = ClinicSerializer(clinics, many=True)
-        return Response({
-            'count': clinics.count(),
-            'results': serializer.data
-        })
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def clinic_doctors(self, request):
-        """Get doctors available at a specific clinic"""
-        clinic_id = request.query_params.get('clinic_id')
-        
-        if not clinic_id:
-            return Response(
-                {'error': 'clinic_id parameter is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            clinic = Clinic.objects.get(id=clinic_id)
-        except Clinic.DoesNotExist:
-            return Response(
-                {'error': 'Clinic not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Get doctors working at this clinic
-        doctors = clinic.staff.filter(
-            role__name='Doctor'
-        ).select_related('role', 'profile').order_by('first_name', 'last_name')
-        
-        from .serializers import DoctorSerializer
-        serializer = DoctorSerializer(doctors, many=True)
-        
-        return Response({
-            'clinic': ClinicSerializer(clinic).data,
-            'doctors': serializer.data,
-            'count': doctors.count()
-        })
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def doctor_availability(self, request):
-        """Get doctor's availability for appointment booking"""
-        doctor_id = request.query_params.get('doctor_id')
-        clinic_id = request.query_params.get('clinic_id')
-        date = request.query_params.get('date')  # Format: YYYY-MM-DD
-        
-        if not all([doctor_id, clinic_id]):
-            return Response(
-                {'error': 'doctor_id and clinic_id parameters are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            doctor = User.objects.get(id=doctor_id, role__name='Doctor')
-            clinic = Clinic.objects.get(id=clinic_id)
-        except (User.DoesNotExist, Clinic.DoesNotExist):
-            return Response(
-                {'error': 'Doctor or clinic not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Validate doctor works at clinic
-        if not doctor.clinics.filter(id=clinic_id).exists():
-            return Response(
-                {'error': 'Doctor does not work at this clinic'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Parse date or use today
-        if date:
-            try:
-                check_date = datetime.strptime(date, '%Y-%m-%d').date()
-            except ValueError:
-                return Response(
-                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        else:
-            check_date = timezone.now().date()
-        
-        # Get available time slots
-        time_slots = self._get_available_slots(doctor, clinic, check_date)
-        
-        return Response({
-            'date': check_date.isoformat(),
-            'doctor': DoctorSerializer(doctor).data,
-            'clinic': ClinicSerializer(clinic).data,
-            'available': len([slot for slot in time_slots if slot['available']]) > 0,
-            'time_slots': time_slots
-        })
-
-    def _get_available_slots(self, doctor, clinic, date):
-        """Generate available time slots for a doctor"""
-        day_of_week = date.weekday()
-        
-        # Get doctor's schedule for this day
-        schedules = DoctorSchedule.objects.filter(
-            doctor=doctor,
-            clinic=clinic,
-            day_of_week=day_of_week,
-            is_active=True
-        )
-        
-        if not schedules.exists():
-            return []
-        
-        slots = []
-        for schedule in schedules:
-            # Generate hourly slots
-            current_time = schedule.start_time
-            while current_time < schedule.end_time:
-                slot_datetime = timezone.make_aware(
-                    datetime.combine(date, current_time)
-                )
-                
-                # Skip past slots
-                if slot_datetime <= timezone.now():
-                    current_time = (datetime.combine(date, current_time) + timedelta(hours=1)).time()
-                    continue
-                
-                # Check if slot is available
-                is_booked = Appointment.objects.filter(
-                    healthcare_provider=doctor,
-                    clinic=clinic,
-                    appointment_date=slot_datetime,
-                    status__in=['P', 'A']
-                ).exists()
-                
-                slots.append({
-                    'time': current_time.strftime('%H:%M'),
-                    'datetime': slot_datetime.isoformat(),
-                    'available': not is_booked
-                })
-                
-                # Move to next hour
-                current_time = (datetime.combine(date, current_time) + timedelta(hours=1)).time()
-        
-        return slots
-
-    # ======================== APPOINTMENT ACTIONS ========================
     def perform_create(self, serializer):
         """Create appointment and send notifications"""
         appointment = serializer.save()
         
         # Send confirmation email to patient
-        try:
-            self._send_email(
-                recipient=appointment.patient.email,
-                subject=f"Appointment Confirmation - {appointment.appointment_date.strftime('%b %d, %Y')}",
-                template_name="appointment_created.html",
-                context={
-                    'patient_name': appointment.patient.get_full_name(),
-                    'appointment_date': appointment.appointment_date,
-                    'provider_name': appointment.healthcare_provider.get_full_name(),
-                    'clinic_name': appointment.clinic.name,
-                    'reason': appointment.reason,
-                    'appointment_id': appointment.id
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send appointment confirmation email: {e}")
+        self._send_appointment_created_notification(appointment)
         
         # Notify nurses at the clinic for approval
-        try:
-            clinic_nurses = appointment.clinic.staff.filter(role__name='Nurse')
-            for nurse in clinic_nurses:
-                self._send_email(
-                    recipient=nurse.email,
-                    subject=f"New Appointment Request - {appointment.appointment_date.strftime('%b %d, %Y')}",
-                    template_name="appointment_nurse_notification.html",
-                    context={
-                        'nurse_name': nurse.get_full_name(),
-                        'patient_name': appointment.patient.get_full_name(),
-                        'doctor_name': appointment.healthcare_provider.get_full_name(),
-                        'appointment_date': appointment.appointment_date,
-                        'clinic_name': appointment.clinic.name,
-                        'reason': appointment.reason,
-                        'appointment_id': appointment.id
-                    }
-                )
-        except Exception as e:
-            print(f"Failed to send nurse notification email: {e}")
+        self._send_nurse_approval_notification(appointment)
 
     def perform_update(self, serializer):
         """Update appointment and send notifications"""
@@ -954,36 +770,185 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         if old_status != appointment.status:
             self._send_status_change_notification(appointment, old_status)
 
+    def _send_appointment_created_notification(self, appointment):
+        """Send notification when appointment is created"""
+        try:
+            subject = f"Appointment Request Submitted - {appointment.appointment_date.strftime('%b %d, %Y at %I:%M %p')}"
+            
+            message = f"""
+Dear {self._get_user_full_name(appointment.patient)},
+
+Your appointment request has been submitted successfully and is currently PENDING APPROVAL.
+
+APPOINTMENT DETAILS:
+• Date & Time: {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}
+• Healthcare Provider: {self._get_user_full_name(appointment.healthcare_provider)}
+• Clinic: {appointment.clinic.name}
+• Reason for Visit: {appointment.reason}
+• Appointment ID: #{appointment.id}
+• Status: Pending Approval
+
+WHAT HAPPENS NEXT:
+• A nurse at {appointment.clinic.name} will review your appointment request
+• You will receive an email notification once your appointment is approved
+• Please arrive 15 minutes early for your appointment
+
+If you need to make any changes or have questions, please contact us at {settings.DEFAULT_FROM_EMAIL}.
+
+Thank you for choosing our healthcare service.
+
+Best regards,
+Healthcare Management System Team
+            """
+            
+            success = self._send_email(
+                recipient=appointment.patient.email,
+                subject=subject,
+                message=message.strip()
+            )
+            
+            if success:
+                logger.info(f"Appointment creation notification sent to {appointment.patient.email}")
+                
+        except Exception as e:
+            logger.error(f"Error sending appointment creation notification: {str(e)}")
+
+    def _send_nurse_approval_notification(self, appointment):
+        """Send notification to nurses for approval"""
+        try:
+            clinic_nurses = appointment.clinic.staff.filter(role__name='Nurse')
+            
+            subject = f"NEW APPOINTMENT REQUIRES APPROVAL - {appointment.appointment_date.strftime('%b %d, %Y')}"
+            
+            for nurse in clinic_nurses:
+                if nurse.email:
+                    message = f"""
+Dear {self._get_user_full_name(nurse)},
+
+A new appointment request has been submitted and requires your approval.
+
+APPOINTMENT DETAILS:
+• Patient: {self._get_user_full_name(appointment.patient)}
+• Doctor: {self._get_user_full_name(appointment.healthcare_provider)}
+• Date & Time: {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}
+• Clinic: {appointment.clinic.name}
+• Reason for Visit: {appointment.reason}
+• Appointment ID: #{appointment.id}
+
+ACTION REQUIRED:
+Please log into the system to review and approve/decline this appointment request.
+
+If you have any questions, please contact support at {settings.DEFAULT_FROM_EMAIL}.
+
+Best regards,
+Healthcare Management System Team
+                    """
+                    
+                    success = self._send_email(
+                        recipient=nurse.email,
+                        subject=subject,
+                        message=message.strip()
+                    )
+                    
+                    if success:
+                        logger.info(f"Nurse approval notification sent to {nurse.email}")
+                    
+        except Exception as e:
+            logger.error(f"Error sending nurse approval notifications: {str(e)}")
+
     def _send_status_change_notification(self, appointment, old_status):
         """Send notification when appointment status changes"""
         status_messages = {
-            'A': 'approved',
-            'C': 'cancelled',
-            'D': 'completed',
-            'R': 'rescheduled',
-            'N': 'marked as no-show'
+            'A': 'APPROVED',
+            'C': 'CANCELLED',
+            'D': 'COMPLETED',
+            'R': 'RESCHEDULED',
+            'N': 'MARKED AS NO-SHOW'
+        }
+        
+        status_symbols = {
+            'A': '✓',
+            'C': '✗',
+            'D': '✓',
+            'R': '⟲',
+            'N': '-'
         }
         
         if appointment.status in status_messages:
             try:
-                self._send_email(
+                status_text = status_messages[appointment.status]
+                symbol = status_symbols.get(appointment.status, '')
+                
+                subject = f"Appointment {status_text.title()} - {appointment.appointment_date.strftime('%b %d, %Y')}"
+                
+                # Create status-specific messages
+                status_info = ""
+                if appointment.status == 'A':
+                    status_info = """
+✓ YOUR APPOINTMENT HAS BEEN APPROVED!
+Please arrive 15 minutes early for your appointment. If you need to reschedule, please contact us at least 24 hours in advance.
+                    """
+                elif appointment.status == 'C':
+                    status_info = """
+✗ YOUR APPOINTMENT HAS BEEN CANCELLED
+If you would like to schedule a new appointment, please contact us or use our online booking system.
+                    """
+                elif appointment.status == 'D':
+                    status_info = """
+✓ YOUR APPOINTMENT IS NOW COMPLETE
+Thank you for visiting us. We hope you had a positive experience with our healthcare services.
+                    """
+                elif appointment.status == 'R':
+                    status_info = """
+⟲ YOUR APPOINTMENT HAS BEEN RESCHEDULED
+Please check your new appointment details and confirm your availability.
+                    """
+                elif appointment.status == 'N':
+                    status_info = """
+- MARKED AS NO-SHOW
+You did not attend your scheduled appointment. Please contact us to reschedule if needed.
+                    """
+                
+                notes_section = ""
+                if appointment.notes:
+                    notes_section = f"""
+ADDITIONAL NOTES:
+{appointment.notes}
+                    """
+                
+                message = f"""
+Dear {self._get_user_full_name(appointment.patient)},
+
+Your appointment status has been updated.
+
+APPOINTMENT DETAILS:
+• Date & Time: {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}
+• Healthcare Provider: {self._get_user_full_name(appointment.healthcare_provider)}
+• Clinic: {appointment.clinic.name}
+• Reason for Visit: {appointment.reason}
+• Appointment ID: #{appointment.id}
+• Status: {symbol} {status_text}
+
+{status_info.strip()}
+{notes_section.strip()}
+
+If you have any questions or concerns, please don't hesitate to contact us at {settings.DEFAULT_FROM_EMAIL}.
+
+Best regards,
+Healthcare Management System Team
+                """
+                
+                success = self._send_email(
                     recipient=appointment.patient.email,
-                    subject=f"Appointment {status_messages[appointment.status].title()}",
-                    template_name="appointment_status_change.html",
-                    context={
-                        'patient_name': appointment.patient.get_full_name(),
-                        'appointment_date': appointment.appointment_date,
-                        'provider_name': appointment.healthcare_provider.get_full_name(),
-                        'clinic_name': appointment.clinic.name,
-                        'old_status': old_status,
-                        'new_status': appointment.status,
-                        'status_message': status_messages[appointment.status],
-                        'appointment_id': appointment.id,
-                        'notes': appointment.notes
-                    }
+                    subject=subject,
+                    message=message.strip()
                 )
+                
+                if success:
+                    logger.info(f"Status change notification sent to {appointment.patient.email}")
+                    
             except Exception as e:
-                print(f"Failed to send status change notification: {e}")
+                logger.error(f"Error sending status change notification: {str(e)}")
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def approve(self, request, pk=None):
@@ -991,7 +956,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         try:
             appointment = self.get_object()
             
-            # Check permissions - ONLY NURSES can approve
+            # Check permissions
             if request.user.role.name != 'Nurse':
                 return Response(
                     {'error': 'Only nurses can approve appointments'},
@@ -1012,14 +977,12 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
                 )
             
             # Update appointment status
+            old_status = appointment.status
             appointment.status = 'A'
             appointment.save()
             
             # Send notification
-            try:
-                self._send_status_change_notification(appointment, 'P')
-            except Exception as e:
-                print(f"Failed to send approval notification: {e}")
+            self._send_status_change_notification(appointment, old_status)
             
             return Response({
                 'message': 'Appointment approved successfully',
@@ -1027,7 +990,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             })
             
         except Exception as e:
-            print(f"Error in approve action: {e}")
+            logger.error(f"Error in approve action: {e}")
             return Response(
                 {'error': f'Failed to approve appointment: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1070,10 +1033,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             appointment.save()
             
             # Send notification
-            try:
-                self._send_status_change_notification(appointment, old_status)
-            except Exception as e:
-                print(f"Failed to send cancellation notification: {e}")
+            self._send_status_change_notification(appointment, old_status)
             
             return Response({
                 'message': 'Appointment cancelled successfully',
@@ -1081,7 +1041,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             })
             
         except Exception as e:
-            print(f"Error in cancel action: {e}")
+            logger.error(f"Error in cancel action: {e}")
             return Response(
                 {'error': f'Failed to cancel appointment: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1093,7 +1053,7 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
         try:
             appointment = self.get_object()
             
-            # Check permissions - only assigned doctor can complete
+            # Check permissions
             if request.user.role.name != 'Doctor':
                 return Response(
                     {'error': 'Only doctors can complete appointments'},
@@ -1121,14 +1081,12 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             if diagnosis:
                 appointment.diagnosis = diagnosis
             
+            old_status = appointment.status
             appointment.status = 'D'
             appointment.save()
             
             # Send notification
-            try:
-                self._send_status_change_notification(appointment, 'A')
-            except Exception as e:
-                print(f"Failed to send completion notification: {e}")
+            self._send_status_change_notification(appointment, old_status)
             
             return Response({
                 'message': 'Appointment completed successfully',
@@ -1136,147 +1094,11 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             })
             
         except Exception as e:
-            print(f"Error in complete action: {e}")
+            logger.error(f"Error in complete action: {e}")
             return Response(
                 {'error': f'Failed to complete appointment: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def pending_for_approval(self, request):
-        """Get appointments pending for approval (nurses only)"""
-        if request.user.role.name != 'Nurse':
-            return Response(
-                {'error': 'Only nurses can view pending appointments'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Get pending appointments at nurse's clinics
-        nurse_clinics = request.user.clinics.all()
-        pending_appointments = Appointment.objects.filter(
-            clinic__in=nurse_clinics,
-            status='P'
-        ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')
-        
-        serializer = AppointmentSerializer(pending_appointments, many=True, context={'request': request})
-        return Response({
-            'count': pending_appointments.count(),
-            'results': serializer.data
-        })
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def my_upcoming(self, request):
-        """Get current user's upcoming appointments"""
-        if request.user.role.name == 'Patient':
-            appointments = Appointment.objects.filter(
-                patient=request.user,
-                appointment_date__gte=timezone.now(),
-                status__in=['P', 'A']
-            ).select_related('healthcare_provider', 'clinic').order_by('appointment_date')[:5]
-        elif request.user.role.name == 'Doctor':
-            appointments = Appointment.objects.filter(
-                healthcare_provider=request.user,
-                appointment_date__gte=timezone.now(),
-                status__in=['P', 'A']
-            ).select_related('patient', 'clinic').order_by('appointment_date')[:10]
-        elif request.user.role.name == 'Nurse':
-            # Nurses see pending appointments at their clinics
-            nurse_clinics = request.user.clinics.all()
-            appointments = Appointment.objects.filter(
-                clinic__in=nurse_clinics,
-                appointment_date__gte=timezone.now(),
-                status='P'
-            ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')[:10]
-        else:
-            # Admin sees system-wide upcoming appointments
-            appointments = Appointment.objects.filter(
-                appointment_date__gte=timezone.now(),
-                status__in=['P', 'A']
-            ).select_related('patient', 'healthcare_provider', 'clinic').order_by('appointment_date')[:20]
-        
-        serializer = AppointmentSerializer(appointments, many=True, context={'request': request})
-        return Response({
-            'count': len(appointments),
-            'results': serializer.data
-        })
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def stats(self, request):
-        """Get appointment statistics for current user"""
-        user = request.user
-        
-        if user.role.name == 'Patient':
-            queryset = Appointment.objects.filter(patient=user)
-        elif user.role.name == 'Doctor':
-            queryset = Appointment.objects.filter(healthcare_provider=user)
-        elif user.role.name == 'Nurse':
-            nurse_clinics = user.clinics.all()
-            queryset = Appointment.objects.filter(clinic__in=nurse_clinics)
-        else:
-            queryset = Appointment.objects.all()
-        
-        stats = {
-            'total': queryset.count(),
-            'pending': queryset.filter(status='P').count(),
-            'approved': queryset.filter(status='A').count(),
-            'completed': queryset.filter(status='D').count(),
-            'cancelled': queryset.filter(status='C').count()
-        }
-        
-        # Add upcoming count
-        stats['upcoming'] = queryset.filter(
-            appointment_date__gte=timezone.now(),
-            status__in=['P', 'A']
-        ).count()
-        
-        return Response(stats)
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def calendar_view(self, request):
-        """Get appointments in calendar format"""
-        # Get date range from query params
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
-        
-        if not start_date:
-            start_date = timezone.now().date()
-        else:
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-        
-        if not end_date:
-            end_date = start_date + timedelta(days=30)
-        else:
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-        
-        # Filter appointments by user role and date range
-        queryset = self.get_queryset().filter(
-            appointment_date__date__gte=start_date,
-            appointment_date__date__lte=end_date
-        ).select_related('patient', 'healthcare_provider', 'clinic')
-        
-        # Group by date
-        calendar_data = {}
-        for appointment in queryset:
-            date_str = appointment.appointment_date.date().isoformat()
-            if date_str not in calendar_data:
-                calendar_data[date_str] = []
-            
-            calendar_data[date_str].append({
-                'id': appointment.id,
-                'time': appointment.appointment_date.time().strftime('%H:%M'),
-                'patient_name': appointment.patient.get_full_name(),
-                'provider_name': appointment.healthcare_provider.get_full_name(),
-                'clinic_name': appointment.clinic.name,
-                'reason': appointment.reason,
-                'status': appointment.status,
-                'status_display': appointment.get_status_display()
-            })
-        
-        return Response({
-            'start_date': start_date,
-            'end_date': end_date,
-            'appointments': calendar_data
-        })
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def bulk_approve(self, request):
@@ -1307,15 +1129,12 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             
             approved_count = 0
             for appointment in appointments:
+                old_status = appointment.status
                 appointment.status = 'A'
                 appointment.save()
                 
                 # Send notification
-                try:
-                    self._send_status_change_notification(appointment, 'P')
-                except Exception as e:
-                    print(f"Failed to send bulk approval notification for appointment {appointment.id}: {e}")
-                
+                self._send_status_change_notification(appointment, old_status)
                 approved_count += 1
             
             return Response({
@@ -1325,11 +1144,58 @@ class AppointmentViewSet(viewsets.ModelViewSet, NotificationMixin):
             })
             
         except Exception as e:
-            print(f"Error in bulk_approve action: {e}")
+            logger.error(f"Error in bulk_approve action: {e}")
             return Response(
                 {'error': f'Failed to bulk approve appointments: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    # Test email functionality
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def test_email(self, request):
+        """Test email functionality - for development only"""
+        try:
+            test_email = request.data.get('email', request.user.email)
+            
+            success = self._send_email(
+                recipient=test_email,
+                subject="Test Email from Healthcare System",
+                message="""
+This is a test email from your Healthcare Management System.
+
+If you received this email, your email configuration is working correctly!
+
+Test Details:
+• Sent to: {test_email}
+• Sent at: {timezone.now().strftime('%B %d, %Y at %I:%M %p')}
+• Sent by: {user_name}
+
+Best regards,
+Healthcare Management System Team
+                """.format(
+                    test_email=test_email,
+                    timezone=timezone,
+                    user_name=self._get_user_full_name(request.user)
+                ).strip()
+            )
+            
+            if success:
+                return Response({
+                    'success': True,
+                    'message': f'Test email sent successfully to {test_email}'
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'message': 'Failed to send test email'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Error sending test email: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class DiseaseViewSet(viewsets.ModelViewSet):
     queryset = Disease.objects.all()
     serializer_class = DiseaseSerializer
@@ -1605,25 +1471,93 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff and user.groups.filter(name='Doctors').exists():
-            return PatientDiagnosis.objects.filter(
+        
+        # 🔧 FIX 1: Add detailed logging for debugging permissions
+        logger.info(f"User: {user.email}, is_staff: {user.is_staff}")
+        logger.info(f"User groups: {list(user.groups.values_list('name', flat=True))}")
+        
+        # Check if user has a role (from your custom user model)
+        if hasattr(user, 'role') and user.role:
+            logger.info(f"User role: {user.role.name}")
+            user_role = user.role.name
+        else:
+            logger.warning(f"User {user.email} has no role assigned")
+            user_role = None
+
+        # 🔧 FIX 2: Use role-based permissions that match your frontend expectations
+        if user_role in ['Doctor', 'Nurse']:
+            # Healthcare providers see diagnoses assigned to them or unassigned
+            queryset = PatientDiagnosis.objects.filter(
                 Q(treating_doctor=user) | Q(treating_doctor__isnull=True)
             ).order_by('-created_at')
-        elif user.is_staff:
-            return PatientDiagnosis.objects.all().order_by('-created_at')
-        return PatientDiagnosis.objects.filter(
-            patient=user
-        ).order_by('-created_at')
+            logger.info(f"Doctor/Nurse queryset: {queryset.count()} diagnoses")
+            
+        elif user_role == 'Admin' or user.is_superuser:
+            # Admins see all diagnoses
+            queryset = PatientDiagnosis.objects.all().order_by('-created_at')
+            logger.info(f"Admin queryset: {queryset.count()} diagnoses")
+            
+        elif user_role == 'Patient':
+            # Patients see only their own diagnoses
+            queryset = PatientDiagnosis.objects.filter(
+                patient=user
+            ).order_by('-created_at')
+            logger.info(f"Patient queryset: {queryset.count()} diagnoses")
+            
+        else:
+            # 🔧 FIX 3: Fallback logic with better debugging
+            logger.warning(f"User {user.email} role '{user_role}' not recognized, using fallback logic")
+            
+            # Fallback to group-based logic if role is not set
+            if user.is_staff and user.groups.filter(name='Doctors').exists():
+                queryset = PatientDiagnosis.objects.filter(
+                    Q(treating_doctor=user) | Q(treating_doctor__isnull=True)
+                ).order_by('-created_at')
+                logger.info(f"Staff Doctor fallback queryset: {queryset.count()} diagnoses")
+                
+            elif user.is_staff:
+                queryset = PatientDiagnosis.objects.all().order_by('-created_at')
+                logger.info(f"Staff fallback queryset: {queryset.count()} diagnoses")
+                
+            else:
+                # Regular users see only their patient diagnoses
+                queryset = PatientDiagnosis.objects.filter(
+                    patient=user
+                ).order_by('-created_at')
+                logger.info(f"Regular user fallback queryset: {queryset.count()} diagnoses")
+
+        # 🔧 FIX 4: Log sample of returned data for debugging
+        total_in_db = PatientDiagnosis.objects.count()
+        logger.info(f"Total diagnoses in database: {total_in_db}")
+        logger.info(f"Returning {queryset.count()} diagnoses to user {user.email}")
+        
+        if queryset.exists():
+            sample = queryset.first()
+            logger.info(f"Sample diagnosis: ID={sample.id}, patient={sample.patient.email if sample.patient else 'None'}, treating_doctor={sample.treating_doctor.email if sample.treating_doctor else 'None'}, status={sample.status}")
+        
+        return queryset
 
     def perform_create(self, serializer):
         """Create diagnosis with patient as current user"""
+        logger.info(f"Creating diagnosis for user: {self.request.user.email}")
         serializer.save(patient=self.request.user)
 
+    # 🔧 FIX 5: Enhanced error handling and logging in action methods
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         """Doctor confirms diagnosis"""
         try:
             diagnosis = self.get_object()
+            logger.info(f"User {request.user.email} attempting to confirm diagnosis {diagnosis.id}")
+            
+            # Check if user has permission to confirm diagnoses
+            if not self._can_confirm_diagnosis(request.user):
+                logger.warning(f"User {request.user.email} does not have permission to confirm diagnoses")
+                return Response(
+                    {"error": "You do not have permission to confirm diagnoses"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             serializer = DiagnosisConfirmationSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
@@ -1633,11 +1567,20 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
                 test_results=serializer.validated_data.get('test_results', None)
             )
             
+            logger.info(f"Diagnosis {diagnosis.id} confirmed by {request.user.email}")
             return Response(
                 self.get_serializer(diagnosis).data,
                 status=status.HTTP_200_OK
             )
+            
+        except PatientDiagnosis.DoesNotExist:
+            logger.error(f"Diagnosis {pk} not found for user {request.user.email}")
+            return Response(
+                {"error": "Diagnosis not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
+            logger.error(f"Failed to confirm diagnosis {pk}: {str(e)}")
             return Response(
                 {"error": f"Failed to confirm diagnosis: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1648,18 +1591,42 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
         """Doctor rejects diagnosis"""
         try:
             diagnosis = self.get_object()
+            logger.info(f"User {request.user.email} attempting to reject diagnosis {diagnosis.id}")
+            
+            # Check if user has permission to reject diagnoses
+            if not self._can_confirm_diagnosis(request.user):
+                logger.warning(f"User {request.user.email} does not have permission to reject diagnoses")
+                return Response(
+                    {"error": "You do not have permission to reject diagnoses"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             notes = request.data.get('notes', '')
+            if not notes.strip():
+                return Response(
+                    {"error": "Notes are required when rejecting a diagnosis"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             diagnosis.reject_diagnosis(
                 doctor=request.user,
                 notes=notes
             )
             
+            logger.info(f"Diagnosis {diagnosis.id} rejected by {request.user.email}")
             return Response(
                 self.get_serializer(diagnosis).data,
                 status=status.HTTP_200_OK
             )
+            
+        except PatientDiagnosis.DoesNotExist:
+            logger.error(f"Diagnosis {pk} not found for user {request.user.email}")
+            return Response(
+                {"error": "Diagnosis not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
+            logger.error(f"Failed to reject diagnosis {pk}: {str(e)}")
             return Response(
                 {"error": f"Failed to reject diagnosis: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1670,17 +1637,36 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
         """Assign doctor to diagnosis"""
         try:
             diagnosis = self.get_object()
+            logger.info(f"User {request.user.email} attempting to assign doctor to diagnosis {diagnosis.id}")
+            
+            # Check if user has permission to assign doctors
+            if not self._can_assign_doctor(request.user):
+                logger.warning(f"User {request.user.email} does not have permission to assign doctors")
+                return Response(
+                    {"error": "You do not have permission to assign doctors"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             serializer = DoctorAssignmentSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
             diagnosis.treating_doctor = serializer.validated_data['doctor_id']
             diagnosis.save()
             
+            logger.info(f"Doctor assigned to diagnosis {diagnosis.id} by {request.user.email}")
             return Response(
                 self.get_serializer(diagnosis).data,
                 status=status.HTTP_200_OK
             )
+            
+        except PatientDiagnosis.DoesNotExist:
+            logger.error(f"Diagnosis {pk} not found for user {request.user.email}")
+            return Response(
+                {"error": "Diagnosis not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
+            logger.error(f"Failed to assign doctor to diagnosis {pk}: {str(e)}")
             return Response(
                 {"error": f"Failed to assign doctor: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1704,8 +1690,122 @@ class PatientDiagnosisViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
+            logger.error(f"Failed to get treatment plan for diagnosis {pk}: {str(e)}")
             return Response(
                 {"error": f"Failed to get treatment plan: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # 🔧 FIX 6: Helper methods for permission checking
+    def _can_confirm_diagnosis(self, user):
+        """Check if user can confirm/reject diagnoses"""
+        if hasattr(user, 'role') and user.role:
+            return user.role.name in ['Doctor', 'Nurse', 'Admin']
+        
+        # Fallback to group-based check
+        return (user.is_staff and 
+                (user.groups.filter(name__in=['Doctors', 'Nurses']).exists() or 
+                 user.is_superuser))
+    
+    def _can_assign_doctor(self, user):
+        """Check if user can assign doctors to diagnoses"""
+        if hasattr(user, 'role') and user.role:
+            return user.role.name in ['Admin', 'Doctor']
+        
+        # Fallback to group-based check
+        return user.is_staff and (user.is_superuser or 
+                                user.groups.filter(name='Doctors').exists())
+
+    # 🔧 FIX 7: Add debugging action for development
+    @action(detail=False, methods=['get'])
+    def debug_permissions(self, request):
+        """Debug endpoint to check user permissions and data access"""
+        if not settings.DEBUG:
+            return Response(
+                {"error": "Debug endpoint only available in development"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        user = request.user
+        debug_info = {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+                "groups": list(user.groups.values_list('name', flat=True)),
+                "role": user.role.name if hasattr(user, 'role') and user.role else None
+            },
+            "permissions": {
+                "can_confirm_diagnosis": self._can_confirm_diagnosis(user),
+                "can_assign_doctor": self._can_assign_doctor(user)
+            },
+            "data_access": {
+                "total_diagnoses_in_db": PatientDiagnosis.objects.count(),
+                "diagnoses_user_can_see": self.get_queryset().count(),
+                "user_patient_diagnoses": PatientDiagnosis.objects.filter(patient=user).count(),
+                "unassigned_diagnoses": PatientDiagnosis.objects.filter(treating_doctor__isnull=True).count(),
+                "diagnoses_assigned_to_user": PatientDiagnosis.objects.filter(treating_doctor=user).count()
+            }
+        }
+        
+        # Sample diagnoses for debugging
+        sample_diagnoses = self.get_queryset()[:5]
+        debug_info["sample_diagnoses"] = [
+            {
+                "id": d.id,
+                "patient_email": d.patient.email if d.patient else None,
+                "treating_doctor_email": d.treating_doctor.email if d.treating_doctor else None,
+                "status": d.status,
+                "created_at": d.created_at.isoformat()
+            }
+            for d in sample_diagnoses
+        ]
+        
+        return Response(debug_info)
+
+    # 🔧 FIX 8: Override list method for better error handling
+    def list(self, request, *args, **kwargs):
+        """Override list to add debugging information"""
+        try:
+            queryset = self.get_queryset()
+            page = self.paginate_queryset(queryset)
+            
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                result = self.get_paginated_response(serializer.data)
+                
+                # Add debug info in development
+                if settings.DEBUG:
+                    result.data['debug'] = {
+                        'total_in_db': PatientDiagnosis.objects.count(),
+                        'user_can_see': queryset.count(),
+                        'user_role': request.user.role.name if hasattr(request.user, 'role') and request.user.role else None
+                    }
+                
+                return result
+
+            serializer = self.get_serializer(queryset, many=True)
+            response_data = serializer.data
+            
+            # Add debug info in development
+            if settings.DEBUG:
+                return Response({
+                    'results': response_data,
+                    'count': len(response_data),
+                    'debug': {
+                        'total_in_db': PatientDiagnosis.objects.count(),
+                        'user_can_see': queryset.count(),
+                        'user_role': request.user.role.name if hasattr(request.user, 'role') and request.user.role else None
+                    }
+                })
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error in PatientDiagnosisViewSet.list for user {request.user.email}: {str(e)}")
+            return Response(
+                {"error": f"Failed to retrieve diagnoses: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

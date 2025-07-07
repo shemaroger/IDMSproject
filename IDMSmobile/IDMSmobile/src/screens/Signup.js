@@ -1,38 +1,22 @@
+// screens/SignUpScreen.js
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  SafeAreaView
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import AuthAPI from '../services/api'; // Adjust path as needed
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Alert, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import RNPickerSelect from 'react-native-picker-select';
+import { authAPI } from '../services/api'; // Adjust the import path as necessary
 
-const SignUp = ({ navigation }) => {
+const SignUpScreen = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    // Step 1: Basic Info
     email: '',
     password: '',
     confirmPassword: '',
     first_name: '',
     last_name: '',
-    
-    // Step 2: Profile Info
     phone_number: '',
     address: '',
     date_of_birth: '',
     gender: '',
-    
-    // Step 3: Medical Info (for patients)
     blood_group: '',
     allergies: '',
     chronic_conditions: '',
@@ -41,66 +25,71 @@ const SignUp = ({ navigation }) => {
     insurance_provider: '',
     insurance_number: '',
   });
-  
+
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-  const genderOptions = [
-    { value: 'M', label: 'Male' },
-    { value: 'F', label: 'Female' },
-    { value: 'O', label: 'Other' },
-    { value: 'U', label: 'Prefer not to say' }
+  const bloodGroups = [
+    { label: 'A+', value: 'A+' },
+    { label: 'A-', value: 'A-' },
+    { label: 'B+', value: 'B+' },
+    { label: 'B-', value: 'B-' },
+    { label: 'AB+', value: 'AB+' },
+    { label: 'AB-', value: 'AB-' },
+    { label: 'O+', value: 'O+' },
+    { label: 'O-', value: 'O-' },
   ];
 
+  const genderOptions = [
+    { label: 'Male', value: 'M' },
+    { label: 'Female', value: 'F' },
+    { label: 'Other', value: 'O' },
+    { label: 'Prefer not to say', value: 'U' },
+  ];
+
+  const navigation = useNavigation();
+
   const handleInputChange = (name, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    if (error) setError('');
+    setFormData({
+      ...formData,
+      [name]: value,
+    });
   };
 
   const validateStep = (step) => {
-    setError('');
-    
     switch (step) {
       case 1:
         if (!formData.email || !formData.password || !formData.first_name || !formData.last_name) {
-          setError('Please fill in all required fields');
+          Alert.alert('Error', 'Please fill in all required fields');
           return false;
         }
         if (formData.password !== formData.confirmPassword) {
-          setError('Passwords do not match');
+          Alert.alert('Error', 'Passwords do not match');
           return false;
         }
         if (formData.password.length < 8) {
-          setError('Password must be at least 8 characters long');
+          Alert.alert('Error', 'Password must be at least 8 characters long');
           return false;
         }
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(formData.email)) {
-          setError('Please enter a valid email address');
+          Alert.alert('Error', 'Please enter a valid email address');
           return false;
         }
         break;
-        
+
       case 2:
         if (!formData.phone_number || !formData.address) {
-          setError('Please fill in all required fields');
+          Alert.alert('Error', 'Please fill in all required fields');
           return false;
         }
         if (formData.phone_number.length < 10) {
-          setError('Please enter a valid phone number');
+          Alert.alert('Error', 'Please enter a valid phone number');
           return false;
         }
         break;
-        
-      case 3:
-        break;
-        
+
       default:
         return true;
     }
@@ -115,16 +104,11 @@ const SignUp = ({ navigation }) => {
 
   const handleBack = () => {
     setCurrentStep(currentStep - 1);
-    setError('');
   };
 
   const handleSubmit = async () => {
-    if (!validateStep(currentStep)) {
-      return;
-    }
-
+    if (!validateStep(currentStep)) return;
     setIsLoading(true);
-    setError('');
 
     try {
       const registrationData = {
@@ -145,378 +129,352 @@ const SignUp = ({ navigation }) => {
         insurance_number: formData.insurance_number || '',
       };
 
-      await AuthAPI.register(registrationData);
-      
-      Alert.alert(
-        'Success!',
-        'Your account has been created successfully. Please sign in with your credentials.',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.navigate('Login')
-          }
-        ]
-      );
+      await authAPI.register(registrationData);
 
+      Alert.alert('Success', 'Account created successfully!');
+      navigation.navigate('Login');
     } catch (err) {
       console.error('Registration error:', err);
-      setError(err.response?.data?.message || err.message || 'Registration failed. Please try again.');
+      Alert.alert('Error', err.message || 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const renderProgressBar = () => (
-    <View style={styles.progressContainer}>
-      <View style={styles.progressBar}>
-        {[1, 2, 3].map((step) => (
-          <View key={step} style={styles.progressStep}>
-            <View style={[
-              styles.progressCircle,
-              currentStep >= step ? styles.progressCircleActive : styles.progressCircleInactive
-            ]}>
-              <Text style={[
-                styles.progressText,
-                currentStep >= step ? styles.progressTextActive : styles.progressTextInactive
-              ]}>
-                {step}
-              </Text>
-            </View>
-            {step < 3 && (
-              <View style={[
-                styles.progressLine,
-                currentStep > step ? styles.progressLineActive : styles.progressLineInactive
-              ]} />
-            )}
-          </View>
-        ))}
-      </View>
-      <View style={styles.progressLabels}>
-        <Text style={styles.progressLabel}>Basic Info</Text>
-        <Text style={styles.progressLabel}>Contact</Text>
-        <Text style={styles.progressLabel}>Medical</Text>
-      </View>
-    </View>
-  );
-
-  const renderInputField = (name, placeholder, icon, options = {}) => (
-    <View style={styles.inputContainer}>
-      <View style={styles.inputWrapper}>
-        <Ionicons 
-          name={icon} 
-          size={20} 
-          color="#9CA3AF" 
-          style={styles.inputIcon}
-        />
-        <TextInput
-          style={[styles.input, options.multiline && styles.textArea]}
-          placeholder={placeholder}
-          value={formData[name]}
-          onChangeText={(value) => handleInputChange(name, value)}
-          secureTextEntry={options.secure && !options.showPassword}
-          keyboardType={options.keyboardType || 'default'}
-          multiline={options.multiline}
-          numberOfLines={options.numberOfLines}
-          placeholderTextColor="#9CA3AF"
-        />
-        {options.togglePassword && (
-          <TouchableOpacity 
-            style={styles.eyeIcon}
-            onPress={() => options.togglePassword()}
-          >
-            <Ionicons 
-              name={options.showPassword ? 'eye-off' : 'eye'} 
-              size={20} 
-              color="#9CA3AF" 
-            />
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
-
-  const renderPickerField = (name, placeholder, options, currentValue) => (
-    <View style={styles.inputContainer}>
-      <TouchableOpacity 
-        style={styles.pickerButton}
-        onPress={() => {
-          Alert.alert(
-            'Select ' + placeholder,
-            '',
-            [
-              ...options.map(option => ({
-                text: option.label || option,
-                onPress: () => handleInputChange(name, option.value || option)
-              })),
-              { text: 'Cancel', style: 'cancel' }
-            ]
-          );
-        }}
-      >
-        <Text style={[
-          styles.pickerText,
-          !currentValue && styles.pickerPlaceholder
-        ]}>
-          {currentValue ? 
-            (options.find(o => (o.value || o) === currentValue)?.label || currentValue) : 
-            placeholder
-          }
-        </Text>
-        <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderStep1 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={styles.stepTitle}>Basic Information</Text>
-      
-      <View style={styles.row}>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>First Name *</Text>
-          {renderInputField('first_name', 'Enter first name', 'person')}
-        </View>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Last Name *</Text>
-          {renderInputField('last_name', 'Enter last name', 'person')}
-        </View>
-      </View>
-
-      <Text style={styles.label}>Email Address *</Text>
-      {renderInputField('email', 'Enter your email', 'mail', { keyboardType: 'email-address' })}
-
-      <View style={styles.row}>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Password *</Text>
-          {renderInputField('password', 'Create password', 'lock-closed', {
-            secure: true,
-            showPassword: showPassword,
-            togglePassword: () => setShowPassword(!showPassword)
-          })}
-        </View>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Confirm Password *</Text>
-          {renderInputField('confirmPassword', 'Confirm password', 'lock-closed', {
-            secure: true,
-            showPassword: showConfirmPassword,
-            togglePassword: () => setShowConfirmPassword(!showConfirmPassword)
-          })}
-        </View>
-      </View>
-    </View>
-  );
-
-  const renderStep2 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={styles.stepTitle}>Contact Information</Text>
-      
-      <Text style={styles.label}>Phone Number *</Text>
-      {renderInputField('phone_number', '+250 xxx xxx xxx', 'call', { keyboardType: 'phone-pad' })}
-
-      <Text style={styles.label}>Address *</Text>
-      {renderInputField('address', 'Enter your full address', 'location', {
-        multiline: true,
-        numberOfLines: 3
-      })}
-
-      <View style={styles.row}>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Date of Birth</Text>
-          {renderInputField('date_of_birth', 'YYYY-MM-DD', 'calendar')}
-        </View>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Gender</Text>
-          {renderPickerField('gender', 'Select gender', genderOptions, formData.gender)}
-        </View>
-      </View>
-    </View>
-  );
-
-  const renderStep3 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={styles.stepTitle}>Medical Information</Text>
-      
-      <View style={styles.row}>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Blood Group</Text>
-          {renderPickerField('blood_group', 'Select blood group', bloodGroups, formData.blood_group)}
-        </View>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Insurance Provider</Text>
-          {renderInputField('insurance_provider', 'e.g., RAMA, MMI', 'card')}
-        </View>
-      </View>
-
-      <Text style={styles.label}>Insurance Number</Text>
-      {renderInputField('insurance_number', 'Enter insurance number', 'card')}
-
-      <Text style={styles.label}>Known Allergies</Text>
-      {renderInputField('allergies', 'List any known allergies', 'alert-circle', {
-        multiline: true,
-        numberOfLines: 3
-      })}
-
-      <Text style={styles.label}>Chronic Conditions</Text>
-      {renderInputField('chronic_conditions', 'List any chronic conditions', 'medical', {
-        multiline: true,
-        numberOfLines: 3
-      })}
-
-      <View style={styles.row}>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Emergency Contact Name</Text>
-          {renderInputField('emergency_contact_name', 'Full name', 'person')}
-        </View>
-        <View style={styles.halfWidth}>
-          <Text style={styles.label}>Emergency Contact Phone</Text>
-          {renderInputField('emergency_contact_phone', '+250 xxx xxx xxx', 'call', { keyboardType: 'phone-pad' })}
-        </View>
-      </View>
-    </View>
-  );
-
   return (
-    <SafeAreaView style={styles.container}>
-      <LinearGradient
-        colors={['#DBEAFE', '#FFFFFF', '#DCFCE7']}
-        style={styles.gradient}
-      >
-        <KeyboardAvoidingView
-          style={styles.keyboardAvoid}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-            {/* Header */}
-            <View style={styles.header}>
-              <View style={styles.logoContainer}>
-                <Ionicons name="heart" size={32} color="#FFFFFF" />
-              </View>
-              <Text style={styles.title}>Join HealthLink</Text>
-              <Text style={styles.subtitle}>Create your account to access healthcare services</Text>
-            </View>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Image source={require('../assets/healthlink-logo.png')} style={styles.logo} />
+            <Text style={styles.headerText}>Create Your Account</Text>
+          </View>
 
-            {/* Progress Bar */}
-            {renderProgressBar()}
-
-            {/* Form */}
-            <View style={styles.formContainer}>
-              {error ? (
-                <View style={styles.errorContainer}>
-                  <Ionicons name="alert-circle" size={20} color="#EF4444" />
-                  <Text style={styles.errorText}>{error}</Text>
+          <View style={styles.progressBar}>
+            {[1, 2, 3].map((step) => (
+              <View key={step} style={styles.progressStep}>
+                <View style={[
+                  styles.progressCircle,
+                  currentStep >= step ? styles.progressCircleActive : styles.progressCircleInactive
+                ]}>
+                  <Text style={currentStep >= step ? styles.progressTextActive : styles.progressTextInactive}>
+                    {step}
+                  </Text>
                 </View>
-              ) : null}
-
-              {currentStep === 1 && renderStep1()}
-              {currentStep === 2 && renderStep2()}
-              {currentStep === 3 && renderStep3()}
-
-              {/* Navigation Buttons */}
-              <View style={styles.buttonContainer}>
-                {currentStep > 1 && (
-                  <TouchableOpacity
-                    style={styles.backButton}
-                    onPress={handleBack}
-                  >
-                    <Text style={styles.backButtonText}>Back</Text>
-                  </TouchableOpacity>
-                )}
-
-                {currentStep < 3 ? (
-                  <TouchableOpacity
-                    style={[styles.nextButton, currentStep === 1 && styles.fullWidth]}
-                    onPress={handleNext}
-                  >
-                    <Text style={styles.nextButtonText}>Next</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[styles.submitButton, isLoading && styles.disabledButton]}
-                    onPress={handleSubmit}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                        <Text style={styles.loadingText}>Creating Account...</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.submitButtonText}>Create Account</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
+                {step < 3 && <View style={[
+                  styles.progressLine,
+                  currentStep > step ? styles.progressLineActive : styles.progressLineInactive
+                ]} />}
               </View>
+            ))}
+          </View>
 
-              {/* Login Link */}
-              <View style={styles.loginLinkContainer}>
-                <Text style={styles.loginLinkText}>Already have an account? </Text>
-                <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-                  <Text style={styles.loginLink}>Sign in here</Text>
+          <View style={styles.progressLabels}>
+            <Text style={styles.progressLabel}>Basic Info</Text>
+            <Text style={styles.progressLabel}>Contact</Text>
+            <Text style={styles.progressLabel}>Medical</Text>
+          </View>
+
+          <View style={styles.cardBody}>
+            {currentStep === 1 && (
+              <View style={styles.stepContainer}>
+                <View style={styles.inputGroup}>
+                  <View style={styles.inputRow}>
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.label}>First Name *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="First name"
+                        placeholderTextColor="#aaa"
+                        value={formData.first_name}
+                        onChangeText={(text) => handleInputChange('first_name', text)}
+                      />
+                    </View>
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.label}>Last Name *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Last name"
+                        placeholderTextColor="#aaa"
+                        value={formData.last_name}
+                        onChangeText={(text) => handleInputChange('last_name', text)}
+                      />
+                    </View>
+                  </View>
+                  <Text style={styles.label}>Email Address *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="your@email.com"
+                    placeholderTextColor="#aaa"
+                    value={formData.email}
+                    onChangeText={(text) => handleInputChange('email', text)}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  <View style={styles.inputRow}>
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.label}>Password *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="••••••••"
+                        placeholderTextColor="#aaa"
+                        value={formData.password}
+                        onChangeText={(text) => handleInputChange('password', text)}
+                        secureTextEntry={!showPassword}
+                      />
+                      <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                        <Text style={styles.showPasswordText}>{showPassword ? 'Hide' : 'Show'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.inputContainer}>
+                      <Text style={styles.label}>Confirm Password *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="••••••••"
+                        placeholderTextColor="#aaa"
+                        value={formData.confirmPassword}
+                        onChangeText={(text) => handleInputChange('confirmPassword', text)}
+                        secureTextEntry={!showConfirmPassword}
+                      />
+                      <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+                        <Text style={styles.showPasswordText}>{showConfirmPassword ? 'Hide' : 'Show'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {currentStep === 2 && (
+              <View style={styles.stepContainer}>
+                <Text style={styles.label}>Phone Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="+250 xxx xxx xxx"
+                  placeholderTextColor="#aaa"
+                  value={formData.phone_number}
+                  onChangeText={(text) => handleInputChange('phone_number', text)}
+                  keyboardType="phone-pad"
+                />
+                <Text style={styles.label}>Address *</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  placeholder="Enter your full address"
+                  placeholderTextColor="#aaa"
+                  value={formData.address}
+                  onChangeText={(text) => handleInputChange('address', text)}
+                  multiline
+                />
+                <View style={styles.inputRow}>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Date of Birth</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#aaa"
+                      value={formData.date_of_birth}
+                      onChangeText={(text) => handleInputChange('date_of_birth', text)}
+                    />
+                  </View>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Gender</Text>
+                    <RNPickerSelect
+                      onValueChange={(value) => handleInputChange('gender', value)}
+                      items={genderOptions}
+                      style={pickerSelectStyles}
+                      value={formData.gender}
+                      placeholder={{ label: 'Select gender', value: null }}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {currentStep === 3 && (
+              <View style={styles.stepContainer}>
+                <View style={styles.inputRow}>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Blood Group</Text>
+                    <RNPickerSelect
+                      onValueChange={(value) => handleInputChange('blood_group', value)}
+                      items={bloodGroups}
+                      style={pickerSelectStyles}
+                      value={formData.blood_group}
+                      placeholder={{ label: 'Select blood group', value: null }}
+                    />
+                  </View>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Insurance Provider</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., RAMA, MMI"
+                      placeholderTextColor="#aaa"
+                      value={formData.insurance_provider}
+                      onChangeText={(text) => handleInputChange('insurance_provider', text)}
+                    />
+                  </View>
+                </View>
+                <Text style={styles.label}>Insurance Number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter insurance number"
+                  placeholderTextColor="#aaa"
+                  value={formData.insurance_number}
+                  onChangeText={(text) => handleInputChange('insurance_number', text)}
+                />
+                <Text style={styles.label}>Known Allergies</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  placeholder="List any known allergies"
+                  placeholderTextColor="#aaa"
+                  value={formData.allergies}
+                  onChangeText={(text) => handleInputChange('allergies', text)}
+                  multiline
+                />
+                <Text style={styles.label}>Chronic Conditions</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  placeholder="List any chronic conditions"
+                  placeholderTextColor="#aaa"
+                  value={formData.chronic_conditions}
+                  onChangeText={(text) => handleInputChange('chronic_conditions', text)}
+                  multiline
+                />
+                <View style={styles.inputRow}>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Emergency Contact Name</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Full name of emergency contact"
+                      placeholderTextColor="#aaa"
+                      value={formData.emergency_contact_name}
+                      onChangeText={(text) => handleInputChange('emergency_contact_name', text)}
+                    />
+                  </View>
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Emergency Contact Phone</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="+250 xxx xxx xxx"
+                      placeholderTextColor="#aaa"
+                      value={formData.emergency_contact_phone}
+                      onChangeText={(text) => handleInputChange('emergency_contact_phone', text)}
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.navigationButtons}>
+              {currentStep > 1 ? (
+                <TouchableOpacity style={styles.button} onPress={handleBack}>
+                  <Text style={styles.buttonText}>Back</Text>
                 </TouchableOpacity>
-              </View>
+              ) : (
+                <View style={styles.emptySpace} />
+              )}
+              {currentStep < 3 ? (
+                <TouchableOpacity style={styles.button} onPress={handleNext}>
+                  <Text style={styles.buttonText}>Next</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={isLoading}>
+                  {isLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Create Account</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
+          </View>
 
-            {/* Footer */}
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>
-                By creating an account, you agree to our{' '}
-                <Text style={styles.footerLink}>Terms of Service</Text> and{' '}
-                <Text style={styles.footerLink}>Privacy Policy</Text>
+          <View style={styles.loginLink}>
+            <Text style={styles.loginText}>
+              Already have an account?{' '}
+              <Text style={styles.loginLinkText} onPress={() => navigation.navigate('Login')}>
+                Sign in here
               </Text>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </LinearGradient>
-    </SafeAreaView>
+            </Text>
+          </View>
+
+          <View style={styles.cardFooter}>
+            <Text style={styles.footerText}>
+              By creating an account, you agree to our{' '}
+              <Text style={styles.footerLink}>Terms</Text> and{' '}
+              <Text style={styles.footerLink}>Privacy Policy</Text>
+            </Text>
+          </View>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
+
+const pickerSelectStyles = StyleSheet.create({
+  inputIOS: {
+    backgroundColor: '#374151',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    padding: 12,
+    color: '#fff',
+    marginBottom: 16,
+  },
+  inputAndroid: {
+    backgroundColor: '#374151',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    padding: 12,
+    color: '#fff',
+    marginBottom: 16,
+  },
+});
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  gradient: {
-    flex: 1,
-  },
-  keyboardAvoid: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  header: {
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-  },
-  logoContainer: {
-    backgroundColor: '#2563EB',
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  scrollContainer: {
+    flexGrow: 1,
+    backgroundColor: '#111827',
     justifyContent: 'center',
+    padding: 16,
+  },
+  card: {
+    backgroundColor: '#1F2937',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#374151',
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    padding: 24,
     alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#374151',
+  },
+  logo: {
+    height: 40,
+    width: 40,
     marginBottom: 16,
   },
-  title: {
-    fontSize: 32,
+  headerText: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#111827',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
-  progressContainer: {
-    alignItems: 'center',
-    marginBottom: 32,
+    color: '#fff',
   },
   progressBar: {
     flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 24,
+    paddingTop: 24,
   },
   progressStep: {
     flexDirection: 'row',
@@ -530,227 +488,128 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   progressCircleActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#DC2626',
   },
   progressCircleInactive: {
-    backgroundColor: '#E5E7EB',
-  },
-  progressText: {
-    fontSize: 14,
-    fontWeight: '500',
+    backgroundColor: '#374151',
+    borderWidth: 1,
+    borderColor: '#4B5563',
   },
   progressTextActive: {
-    color: '#FFFFFF',
+    color: '#fff',
+    fontWeight: 'bold',
   },
   progressTextInactive: {
-    color: '#6B7280',
+    color: '#9CA3AF',
   },
   progressLine: {
-    width: 48,
     height: 2,
+    flex: 1,
     marginHorizontal: 8,
   },
   progressLineActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#DC2626',
   },
   progressLineInactive: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#374151',
   },
   progressLabels: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: 200,
+    justifyContent: 'space-around',
+    marginTop: 8,
   },
   progressLabel: {
+    color: '#9CA3AF',
     fontSize: 12,
-    color: '#6B7280',
   },
-  formContainer: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 20,
-    borderRadius: 16,
+  cardBody: {
     padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 24,
-  },
-  errorText: {
-    color: '#DC2626',
-    fontSize: 14,
-    marginLeft: 8,
-    flex: 1,
   },
   stepContainer: {
     marginBottom: 24,
   },
-  stepTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  inputContainer: {
+  inputGroup: {
     marginBottom: 16,
   },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    paddingLeft: 44,
-    fontSize: 16,
-    color: '#111827',
-  },
-  textArea: {
-    paddingTop: 12,
-    textAlignVertical: 'top',
-  },
-  inputIcon: {
-    position: 'absolute',
-    left: 12,
-    zIndex: 1,
-  },
-  eyeIcon: {
-    position: 'absolute',
-    right: 12,
-    zIndex: 1,
-  },
-  pickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  pickerText: {
-    fontSize: 16,
-    color: '#111827',
-  },
-  pickerPlaceholder: {
-    color: '#9CA3AF',
-  },
-  row: {
+  inputRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  halfWidth: {
+  inputContainer: {
     width: '48%',
   },
-  buttonContainer: {
+  label: {
+    color: '#D1D5DB',
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#374151',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    padding: 12,
+    color: '#fff',
+    marginBottom: 16,
+  },
+  textArea: {
+    height: 100,
+    textAlignVertical: 'top',
+  },
+  showPasswordText: {
+    color: '#9CA3AF',
+    textAlign: 'right',
+    marginTop: -30,
+    marginBottom: 16,
+    paddingRight: 10,
+  },
+  navigationButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 32,
+    marginTop: 24,
   },
-  backButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+  button: {
+    backgroundColor: '#DC2626',
+    padding: 12,
     borderRadius: 8,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: '#374151',
-  },
-  nextButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-  },
-  nextButtonText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  submitButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-  },
-  submitButtonText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '500',
-  },
-  fullWidth: {
-    flex: 1,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
     alignItems: 'center',
+    width: '48%',
   },
-  loadingText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    marginLeft: 8,
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
-  loginLinkContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 32,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  loginLinkText: {
-    fontSize: 14,
-    color: '#6B7280',
+  emptySpace: {
+    width: '48%',
   },
   loginLink: {
-    fontSize: 14,
-    color: '#2563EB',
-    fontWeight: '500',
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingVertical: 32,
+    marginTop: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
     alignItems: 'center',
   },
+  loginText: {
+    color: '#9CA3AF',
+  },
+  loginLinkText: {
+    color: '#F87171',
+    fontWeight: 'bold',
+  },
+  cardFooter: {
+    padding: 16,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
+  },
   footerText: {
-    fontSize: 12,
     color: '#6B7280',
+    fontSize: 12,
     textAlign: 'center',
-    lineHeight: 18,
   },
   footerLink: {
-    color: '#2563EB',
+    color: '#F87171',
+    textDecorationLine: 'underline',
   },
 });
 
-export default SignUp;
+export default SignUpScreen;

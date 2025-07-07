@@ -84,7 +84,6 @@ const EmergencyApprovalPage = () => {
       
       setRequests(pendingRequests);
     } catch (error) {
-      console.error('Error fetching requests:', error);
       setError('Failed to load emergency requests. Please try again.');
       setRequests([]);
     } finally {
@@ -166,8 +165,6 @@ const EmergencyApprovalPage = () => {
         }, 3000);
         
       } catch (approveError) {
-        console.log('Approve endpoint error:', approveError.message);
-        
         // Handle specific error cases
         if (approveError.message.includes('404') || approveError.message.includes('Not found')) {
           // Try updateStatus as fallback
@@ -198,7 +195,6 @@ const EmergencyApprovalPage = () => {
       }
       
     } catch (error) {
-      console.error('Unexpected approval error:', error);
       setError('An unexpected error occurred while approving the request. Please try again or contact support.');
     } finally {
       setLoading(false);
@@ -226,8 +222,6 @@ const EmergencyApprovalPage = () => {
         setError(null);
         
       } catch (rejectError) {
-        console.log('Reject endpoint error:', rejectError.message);
-        
         // Handle specific error cases
         if (rejectError.message.includes('404') || rejectError.message.includes('Not found')) {
           // Try updateStatus as fallback
@@ -258,7 +252,6 @@ const EmergencyApprovalPage = () => {
       }
       
     } catch (error) {
-      console.error('Unexpected rejection error:', error);
       setError('An unexpected error occurred while rejecting the request. Please try again or contact support.');
     } finally {
       setLoading(false);
@@ -517,53 +510,75 @@ const EmergencyApprovalPage = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {currentRequests.map((request) => (
-                    <tr key={request.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">ER-{request.id}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {new Date(request.request_time).toLocaleDateString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(request.request_time).toLocaleTimeString()}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                            <User className="w-5 h-5 text-blue-600" />
+                  {currentRequests.map((request, index) => {
+                    // Debug log for each request
+                    console.log(`Rendering request ${index}:`, request);
+                    
+                    return (
+                      <tr key={request.id || index} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">
+                            ER-{request.id || 'N/A'}
                           </div>
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              {request.patient?.name || request.patient_name || 'Unknown'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {request.request_time ? 
+                              new Date(request.request_time).toLocaleDateString() : 
+                              request.created_at ? 
+                              new Date(request.created_at).toLocaleDateString() :
+                              'No date'
+                            }
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {request.request_time ? 
+                              new Date(request.request_time).toLocaleTimeString() :
+                              request.created_at ? 
+                              new Date(request.created_at).toLocaleTimeString() :
+                              ''
+                            }
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                              <User className="w-5 h-5 text-blue-600" />
                             </div>
-                            {request.patient?.medical_id && (
-                              <div className="text-xs text-gray-500">ID: {request.patient.medical_id}</div>
-                            )}
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">
+                                {request.patient?.name || 
+                                 request.patient?.user?.first_name + ' ' + request.patient?.user?.last_name ||
+                                 request.patient_name || 
+                                 'Unknown Patient'}
+                              </div>
+                              {(request.patient?.medical_id || request.patient?.id) && (
+                                <div className="text-xs text-gray-500">
+                                  ID: {request.patient.medical_id || request.patient.id}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900 max-w-xs truncate" title={request.location}>
-                          {request.location}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getUrgencyBadge(request.urgency_level)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={() => viewRequestDetails(request)}
-                          className="text-blue-600 hover:text-blue-800 px-3 py-1 rounded hover:bg-blue-50 transition-colors flex items-center gap-1"
-                        >
-                          <Eye className="w-4 h-4" />
-                          Review
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm text-gray-900 max-w-xs truncate" title={request.location || 'No location'}>
+                            {request.location || 'No location provided'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {getUrgencyBadge(request.urgency_level || 'standard')}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <button
+                            onClick={() => viewRequestDetails(request)}
+                            className="text-blue-600 hover:text-blue-800 px-3 py-1 rounded hover:bg-blue-50 transition-colors flex items-center gap-1"
+                          >
+                            <Eye className="w-4 h-4" />
+                            Review
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

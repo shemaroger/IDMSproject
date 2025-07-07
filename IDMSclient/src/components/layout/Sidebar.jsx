@@ -49,11 +49,6 @@ const getNavigationItems = (userRole) => {
         badge: '2'
       },
       {
-        name: 'Medical Records',
-        href: '/patient/records',
-        icon: FileText
-      },
-      {
         name: 'Symptom Checker',
         href: '/patient/symptom-checker',
         icon: Activity
@@ -66,7 +61,7 @@ const getNavigationItems = (userRole) => {
       },
       {
         name: 'Health Tips',
-        href: '/patient/prevention',
+        href: '/patient/prevention-tips',
         icon: Shield
       },
       {
@@ -83,12 +78,6 @@ const getNavigationItems = (userRole) => {
 
     Doctor: [
       {
-        name: 'Patient List',
-        href: '/doctor/patients',
-        icon: Users,
-        badge: '24'
-      },
-      {
         name: 'Clinic Sessions',
         href: '/doctor/clinic-session-review',
         icon: Calendar,
@@ -98,13 +87,6 @@ const getNavigationItems = (userRole) => {
         name: 'Disease Management',
         href: '/doctor/clinic-disease-confirmation',
         icon: FileText
-      },
-      {
-        name: 'Emergency Cases',
-        href: '/doctor/emergencies',
-        icon: AlertTriangle,
-        badge: '3',
-        highlight: true
       },
       {
         name: 'Consultations',
@@ -131,26 +113,26 @@ const getNavigationItems = (userRole) => {
         badge: '15',
         description: 'Approve, schedule, and manage appointments'
       },
-      {
-        name: 'Patient Registry',
-        href: '/nurse/patients',
-        icon: Users,
-        badge: '89',
-        description: 'Patient check-in and registration'
-      },
-      {
-        name: 'Reception Desk',
-        href: '/nurse/reception',
-        icon: ClipboardList,
-        badge: '5',
-        description: 'Front desk operations and scheduling'
-      },
-      {
-        name: 'Medical Records',
-        href: '/nurse/records',
-        icon: FileText,
-        description: 'Patient medical history and documentation'
-      },
+      // {
+      //   name: 'Patient Registry',
+      //   href: '/nurse/patients',
+      //   icon: Users,
+      //   badge: '89',
+      //   description: 'Patient check-in and registration'
+      // },
+      // {
+      //   name: 'Reception Desk',
+      //   href: '/nurse/reception',
+      //   icon: ClipboardList,
+      //   badge: '5',
+      //   description: 'Front desk operations and scheduling'
+      // },
+      // {
+      //   name: 'Medical Records',
+      //   href: '/nurse/records',
+      //   icon: FileText,
+      //   description: 'Patient medical history and documentation'
+      // },
       {
         name: 'Emergency Intake',
         href: '/nurse/emergency',
@@ -159,23 +141,22 @@ const getNavigationItems = (userRole) => {
         highlight: true,
         description: 'Emergency patient triage and intake'
       },
+      // {
+      //   name: 'Vital Signs',
+      //   href: '/nurse/vitals',
+      //   icon: Activity,
+      //   description: 'Record and monitor patient vital signs'
+      // },
+      // {
+      //   name: 'Medication Admin',
+      //   href: '/nurse/medications',
+      //   icon: Pill,
+      //   description: 'Medication administration and tracking'
+      // },
       {
-        name: 'Vital Signs',
-        href: '/nurse/vitals',
-        icon: Activity,
-        description: 'Record and monitor patient vital signs'
-      },
-      {
-        name: 'Medication Admin',
-        href: '/nurse/medications',
-        icon: Pill,
-        description: 'Medication administration and tracking'
-      },
-      {
-        name: 'Care Coordination',
-        href: '/nurse/coordination',
-        icon: MessageSquare,
-        description: 'Coordinate care between providers'
+        name: 'Health Tips',
+        href: '/nurse/prevention-tips',
+        icon: Shield
       },
       {
         name: 'Shift Reports',
@@ -185,95 +166,95 @@ const getNavigationItems = (userRole) => {
       }
     ],
 
-    'Health Provider': [
-      {
-        name: 'Practice Overview',
-        href: '/provider/overview',
-        icon: Building
-      },
-      {
-        name: 'Staff Management',
-        href: '/provider/staff',
-        icon: UserCheck,
-        badge: '12'
-      },
-      {
-        name: 'Doctor Accounts',
-        href: '/provider/doctors',
-        icon: UserPlus
-      },
-      {
-        name: 'Patient Management',
-        href: '/provider/patients',
-        icon: Users,
-        badge: '150'
-      },
-      {
-        name: 'Appointments',
-        href: '/provider/appointments',
-        icon: Calendar
-      },
-      {
-        name: 'Financial Reports',
-        href: '/provider/finance',
-        icon: TrendingUp
-      },
-      {
-        name: 'Quality Control',
-        href: '/provider/quality',
-        icon: Shield
-      },
-      {
-        name: 'Inventory',
-        href: '/provider/inventory',
-        icon: Database
-      }
-    ],
+    // 'Health Provider': [
+    //   {
+    //     name: 'Practice Overview',
+    //     href: '/provider/overview',
+    //     icon: Building
+    //   },
+    //   {
+    //     name: 'Staff Management',
+    //     href: '/provider/staff',
+    //     icon: UserCheck,
+    //     badge: '12'
+    //   },
+    //   {
+    //     name: 'Doctor Accounts',
+    //     href: '/provider/doctors',
+    //     icon: UserPlus
+    //   },
+    //   {
+    //     name: 'Patient Management',
+    //     href: '/provider/patients',
+    //     icon: Users,
+    //     badge: '150'
+    //   },
+    //   {
+    //     name: 'Appointments',
+    //     href: '/provider/appointments',
+    //     icon: Calendar
+    //   },
+    //   {
+    //     name: 'Financial Reports',
+    //     href: '/provider/finance',
+    //     icon: TrendingUp
+    //   },
+    //   {
+    //     name: 'Quality Control',
+    //     href: '/provider/quality',
+    //     icon: Shield
+    //   },
+    //   {
+    //     name: 'Inventory',
+    //     href: '/provider/inventory',
+    //     icon: Database
+    //   }
+    // ],
 
-    'Public Health Provider': [
-      {
-        name: 'Disease Surveillance',
-        href: '/public-health/surveillance',
-        icon: TrendingUp,
-        badge: '5'
-      },
-      {
-        name: 'Outbreak Management',
-        href: '/public-health/outbreaks',
-        icon: AlertTriangle,
-        highlight: true
-      },
-      {
-        name: 'Prevention Campaigns',
-        href: '/public-health/campaigns',
-        icon: Shield
-      },
-      {
-        name: 'Population Health',
-        href: '/public-health/population',
-        icon: Users
-      },
-      {
-        name: 'Geographic Mapping',
-        href: '/public-health/mapping',
-        icon: MapPin
-      },
-      {
-        name: 'Health Analytics',
-        href: '/public-health/analytics',
-        icon: BarChart3
-      },
-      {
-        name: 'Emergency Response',
-        href: '/public-health/emergency',
-        icon: Phone
-      },
-      {
-        name: 'Provider Oversight',
-        href: '/public-health/providers',
-        icon: Building
-      }
-    ],
+    // 'Public Health Provider': [
+    //   {
+    //     name: 'Disease Surveillance',
+    //     href: '/public-health/surveillance',
+    //     icon: TrendingUp,
+    //     badge: '5'
+    //   },
+    //   {
+    //     name: 'Outbreak Management',
+    //     href: '/public-health/outbreaks',
+    //     icon: AlertTriangle,
+    //     highlight: true
+    //   },
+    //   {
+    //     name: 'Prevention Campaigns',
+    //     href: '/public-health/campaigns',
+    //     icon: Shield
+    //   },
+    //   {
+    //     name: 'Population Health',
+    //     href: '/public-health/population',
+    //     icon: Users
+    //   },
+    //   {
+    //     name: 'Geographic Mapping',
+    //     href: '/public-health/mapping',
+    //     icon: MapPin
+    //   },
+    //   {
+    //     name: 'Health Analytics',
+    //     href: '/public-health/analytics',
+    //     icon: BarChart3
+    //   },
+    //   {
+    //     name: 'Emergency Response',
+    //     href: '/public-health/emergency',
+    //     icon: Phone
+    //   },
+    //   {
+    //     name: 'Provider Oversight',
+    //     href: '/public-health/providers',
+    //     icon: Building
+    //   }
+    // ],
 
     Admin: [
       {
@@ -299,45 +280,45 @@ const getNavigationItems = (userRole) => {
         icon: Building,
         badge: '98'
       },
-      {
-        name: 'Patient Records',
-        href: '/admin/patients',
-        icon: Heart,
-        badge: '2,456'
-      },
-      {
-        name: 'Appointments',
-        href: '/admin/appointments',
-        icon: Calendar
-      },
+      // {
+      //   name: 'Patient Records',
+      //   href: '/admin/patients',
+      //   icon: Heart,
+      //   badge: '2,456'
+      // },
+      // {
+      //   name: 'Appointments',
+      //   href: '/admin/appointments',
+      //   icon: Calendar
+      // },
       {
         name: 'Prevention Tips',
         href: '/admin/prevention-tips',
         icon: BookOpen,
         badge: '24',
       },
-      {
-        name: 'System Alerts',
-        href: '/admin/alerts',
-        icon: Bell,
-        badge: '12',
-        badgeColor: 'bg-red-100 text-red-800'
-      },
+      // {
+      //   name: 'System Alerts',
+      //   href: '/admin/alerts',
+      //   icon: Bell,
+      //   badge: '12',
+      //   badgeColor: 'bg-red-100 text-red-800'
+      // },
       {
         name: 'Analytics & Reports',
         href: '/admin/analytics',
         icon: TrendingUp
       },
-      {
-        name: 'System Health',
-        href: '/admin/health',
-        icon: Activity
-      },
-      {
-        name: 'Backup & Security',
-        href: '/admin/security',
-        icon: Shield
-      }
+      // {
+      //   name: 'System Health',
+      //   href: '/admin/health',
+      //   icon: Activity
+      // },
+      // {
+      //   name: 'Backup & Security',
+      //   href: '/admin/security',
+      //   icon: Shield
+      // }
     ]
   };
 
@@ -465,7 +446,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             ))}
           </div>
 
-          {/* Quick Actions for Nurses */}
+          {/* Quick Actions for Nurses
           {userRole === 'Nurse' && (
             <div className="mt-6 pt-4 border-t border-gray-200">
               <h3 className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
@@ -494,9 +475,9 @@ const Sidebar = ({ isOpen, onClose }) => {
                 </button>
               </div>
             </div>
-          )}
+          )} */}
 
-          {/* Settings Section */}
+          {/* Settings Section
           <div className="mt-6 pt-4 border-t border-gray-200">
             <div className="space-y-1">
               <Link
@@ -508,7 +489,7 @@ const Sidebar = ({ isOpen, onClose }) => {
                 Settings
               </Link>
             </div>
-          </div>
+          </div> */}
 
           {/* Role-specific footer info */}
           <div className="mt-4 p-3 bg-gray-50 rounded-lg border text-center">

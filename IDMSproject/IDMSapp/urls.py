@@ -25,7 +25,13 @@ router.register(r'disease-analyses', DiseaseAnalysisViewSet, basename='disease-a
 router.register(r'patient-diagnoses', PatientDiagnosisViewSet, basename='patient-diagnoses')
 router.register(r'medical-tests', MedicalTestViewSet, basename='medical-tests')
 router.register(r'test-results', PatientTestResultViewSet, basename='test-results')
+# router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-plans')
+
+router.register(r'medical-tests', MedicalTestViewSet)
+router.register(r'patient-test-results', PatientTestResultViewSet, basename='patient-test-results')
 router.register(r'treatment-plans', TreatmentPlanViewSet, basename='treatment-plans')
+router.register(r'doctors', DoctorViewSet, basename='doctors')
+router.register(r'doctor-cases', DoctorCasesViewSet, basename='doctor-cases')
 
 # Emergency services
 router.register(r'emergency-requests', EmergencyAmbulanceRequestViewSet, basename='emergency-request')
@@ -47,4 +53,5 @@ urlpatterns = [
     path('auth/logout/', AuthViewSet.as_view({'post': 'logout'}), name='auth-logout'),
     path('auth/refresh/', AuthViewSet.as_view({'post': 'refresh'}), name='auth-refresh'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
 

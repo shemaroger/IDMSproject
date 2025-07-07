@@ -7,7 +7,7 @@ const Home = () => {
 
   return (
     <ImageBackground 
-      source={require('../assets/medical-bg.png')} // Add your own background image
+      source={require('../assets/healthlink-logo.png')} // Add your own background image
       style={styles.background}
       resizeMode="cover"
     >
