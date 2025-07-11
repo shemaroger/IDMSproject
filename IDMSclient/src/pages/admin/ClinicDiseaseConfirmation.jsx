@@ -16,7 +16,6 @@ import {
   Search,
   Filter,
   Eye,
-  MessageSquare,
   UserCheck,
   AlertCircle,
   TrendingUp,
@@ -336,9 +335,9 @@ const ClinicDiseaseConfirmation = () => {
     setShowDetailModal(true);
   };
 
-  const viewPatientChart = (patientId) => {
-    navigate(`/clinic/patient-chart/${patientId}`);
-  };
+  // const viewPatientChart = (patientId) => {
+  //   navigate(`/clinic/patient-chart/${patientId}`);
+  // };
 
   const viewOriginalSession = (sessionId) => {
     navigate(`/clinic/symptom-review/${sessionId}`);
@@ -620,15 +619,15 @@ const ClinicDiseaseConfirmation = () => {
                       <Eye className="w-4 h-4" />
                       Detailed Review
                     </button>
-                    {diagnosis.patient?.id && (
-                      <button
-                        onClick={() => viewPatientChart(diagnosis.patient.id)}
-                        className="flex items-center gap-1 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-                      >
-                        <User className="w-4 h-4" />
-                        Patient Chart
-                      </button>
-                    )}
+                    {/* {diagnosis.patient?.id && (
+                      // <button
+                      //   onClick={() => viewPatientChart(diagnosis.patient.id)}
+                      //   className="flex items-center gap-1 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                      // >
+                      //   <User className="w-4 h-4" />
+                      //   Patient Chart
+                      // </button>
+                    )} */}
                   </div>
                 )}
 
@@ -1127,7 +1126,7 @@ const ClinicDiseaseConfirmation = () => {
                       View Session
                     </button>
                   )}
-                  {selectedDiagnosis.patient?.id && (
+                  {/* {selectedDiagnosis.patient?.id && (
                     <button
                       onClick={() => {
                         setShowDetailModal(false);
@@ -1138,7 +1137,7 @@ const ClinicDiseaseConfirmation = () => {
                       <User className="w-4 h-4" />
                       Patient Chart
                     </button>
-                  )}
+                  )} */}
                 </div>
 
                 <div className="flex gap-2">

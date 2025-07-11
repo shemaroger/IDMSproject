@@ -57,7 +57,7 @@ const getNavigationItems = (userRole) => {
         name: 'Emergency Services',
         href: '/patient/emergency',
         icon: Phone,
-        highlight: true
+        highlight: false
       },
       {
         name: 'Health Tips',
@@ -77,20 +77,20 @@ const getNavigationItems = (userRole) => {
     ],
 
     Doctor: [
-      {
-        name: 'Clinic Sessions',
-        href: '/doctor/clinic-session-review',
-        icon: Calendar,
-        badge: '8'
-      },
+      // {
+      //   name: 'Clinic Sessions',
+      //   href: '/doctor/clinic-session-review',
+      //   icon: Calendar,
+      //   badge: '8'
+      // },
       {
         name: 'Disease Management',
         href: '/doctor/clinic-disease-confirmation',
         icon: FileText
       },
       {
-        name: 'Consultations',
-        href: '/doctor/consultations',
+        name: 'Approved Appointments',
+        href: '/doctor/appointments',
         icon: Stethoscope
       },
       {
@@ -98,11 +98,11 @@ const getNavigationItems = (userRole) => {
         href: '/doctor/clinic-symptoms-check/',
         icon: Activity
       },
-      {
-        name: 'Clinical Reports',
-        href: '/doctor/reports',
-        icon: BarChart3
-      }
+      // {
+      //   name: 'Clinical Reports',
+      //   href: '/doctor/reports',
+      //   icon: BarChart3
+      // }
     ],
 
     Nurse: [
@@ -138,7 +138,7 @@ const getNavigationItems = (userRole) => {
         href: '/nurse/emergency',
         icon: AlertTriangle,
         badge: '2',
-        highlight: true,
+        highlight: false,
         description: 'Emergency patient triage and intake'
       },
       // {

@@ -25,6 +25,7 @@ import HealthTips from './pages/nurse/HealthTips';
 import RoleManagement from './pages/admin/RoleManagement';
 import AnalyticsReports from './pages/admin/AnalyticsReports';
 import ReportPage from './pages/nurse/ReportPage';
+import ApprovedAppointments from './pages/nurse/ApprovedAppointments';
 
 // Provider pages
 import AppointmentManagement from './pages/nurse/AppointmentManagement';
@@ -218,7 +219,7 @@ function App() {
             } />
             <Route path="/doctor/appointments" element={
               <ProtectedRoute requiredRole="Doctor">
-                <AppointmentManagement />
+                <ApprovedAppointments/>
               </ProtectedRoute>
             } />
             {/* NEW: Medical Management for Doctors */}
@@ -252,6 +253,13 @@ function App() {
                 <div>Medical Records - Coming Soon</div>
               </ProtectedRoute>
             } />
+            <Route path="/doctor/ApprovedAppointments" element={
+              <ProtectedRoute requiredRole="Doctor">
+                <ApprovedAppointments />
+              </ProtectedRoute>
+            } />
+            
+            {/* ADDED: Clinic session review route for doctors */}
             
             {/* FIXED: Added sessionId parameter to the route */}
             <Route path="/doctor/clinic-session-review/:sessionId" element={
