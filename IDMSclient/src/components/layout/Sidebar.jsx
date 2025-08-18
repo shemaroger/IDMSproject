@@ -98,6 +98,11 @@ const getNavigationItems = (userRole) => {
         href: '/doctor/clinic-symptoms-check/',
         icon: Activity
       },
+      {
+        name: 'Treatment Plan',
+        href: '/doctor/treatment-plans',
+        icon: FileText
+      }
       // {
       //   name: 'Clinical Reports',
       //   href: '/doctor/reports',

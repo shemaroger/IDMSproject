@@ -44,7 +44,7 @@ import UserManagement from './pages/admin/UserManagement';
 
 // NEW: Medical Management Pages
 import MedicalTestsPage from './pages/admin/MedicalTestsPage';
-import TreatmentPlansPage from './pages/admin/TreatmentPlansPage';
+import TreatmentPlansPage from './pages/admin/TreatmentPlanPage';
 import TestResultsPage from './pages/admin/TestResultsPage';
 import DoctorCasesPage from './pages/admin/DoctorCasesPage';
 
@@ -228,8 +228,8 @@ function App() {
                 <DoctorCasesPage />
               </ProtectedRoute>
             } />
-            <Route path="/doctor/treatment-plans" element={
-              <ProtectedRoute requiredRole="Doctor">
+            <Route path="/patient/treatment-plan/:id" element={
+              <ProtectedRoute >
                 <TreatmentPlansPage />
               </ProtectedRoute>
             } />
@@ -443,11 +443,7 @@ function App() {
                 <MedicalTestsPage />
               </AdminRoute>
             } />
-            <Route path="/admin/treatment-plans" element={
-              <AdminRoute>
-                <TreatmentPlansPage />
-              </AdminRoute>
-            } />
+            <Route path="/patient/diagnosis/:diagnosisId/treatment-plan" element={<TreatmentPlansPage />} />
             <Route path="/admin/test-results" element={
               <AdminRoute>
                 <TestResultsPage />

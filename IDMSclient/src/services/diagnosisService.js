@@ -1,4 +1,4 @@
-// src/services/diagnosisService.js - Enhanced with Medical Tests and Treatment Plans
+// src/services/diagnosisService.js - Enhanced with User-Based Treatment Plans
 import api from './api';
 
 const diagnosisService = {
@@ -200,7 +200,7 @@ const diagnosisService = {
     }
   },
 
-  // NEW: Medical Tests API
+  // Medical Tests API
   medicalTests: {
     list: async (params = {}) => {
       try {
@@ -270,7 +270,7 @@ const diagnosisService = {
     }
   },
 
-  // NEW: Patient Test Results API
+  // Patient Test Results API
   testResults: {
     list: async (params = {}) => {
       try {
@@ -329,7 +329,7 @@ const diagnosisService = {
     }
   },
 
-  // NEW: Treatment Plans API
+  // ENHANCED: Treatment Plans API with User-Based Methods
   treatmentPlans: {
     list: async (params = {}) => {
       try {
@@ -387,8 +387,90 @@ const diagnosisService = {
       }
     },
 
+    // NEW: Get treatment plans by user ID
+    getByUser: async (userId, filters = {}) => {
+      try {
+        diagnosisService.utils.validateId(userId, 'User ID');
+        
+        const params = { 
+          user_id: userId,
+          ...filters // Can include status, date_from, date_to
+        };
+        
+        const response = await api.get('/treatment-plans/by_user/', { params });
+        return response.data;
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
+    // NEW: Get user treatment plan summary
+    getUserSummary: async (userId) => {
+      try {
+        diagnosisService.utils.validateId(userId, 'User ID');
+        
+        const response = await api.get('/treatment-plans/user_summary/', { 
+          params: { user_id: userId }
+        });
+        return response.data;
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
+    // NEW: Get current user's treatment plans
+    getMy: async (filters = {}) => {
+      try {
+        const response = await api.get('/treatment-plans/', { 
+          params: filters // Let backend handle user filtering
+        });
+        return response.data;
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
+    // NEW: Get active treatment plans for a user
+    getActiveByUser: async (userId) => {
+      try {
+        return await diagnosisService.treatmentPlans.getByUser(userId, { 
+          status: 'active' 
+        });
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
+    // NEW: Get completed treatment plans for a user
+    getCompletedByUser: async (userId) => {
+      try {
+        return await diagnosisService.treatmentPlans.getByUser(userId, { 
+          status: 'completed' 
+        });
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
+    // NEW: Get treatment plans within date range for a user
+    getByUserDateRange: async (userId, dateFrom, dateTo) => {
+      try {
+        return await diagnosisService.treatmentPlans.getByUser(userId, { 
+          date_from: dateFrom,
+          date_to: dateTo
+        });
+      } catch (error) {
+        throw new Error(diagnosisService.utils.formatError(error));
+      }
+    },
+
     addMedication: async (id, medicationData) => {
       try {
+        const validation = diagnosisService.utils.validateMedication(medicationData);
+        if (!validation.isValid) {
+          throw new Error(validation.errors.join(', '));
+        }
+        
         const response = await api.post(`/treatment-plans/${id}/add_medication/`, medicationData);
         return response.data;
       } catch (error) {
@@ -406,7 +488,7 @@ const diagnosisService = {
     }
   },
 
-  // NEW: Doctors API
+  // Doctors API
   doctors: {
     list: async (params = {}) => {
       try {
