@@ -11,6 +11,8 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 from rest_framework.authtoken.models import Token  
 from django.conf import settings
+
+from django.db.models import Q
 from django.db.models import Q
 from django.db.models import Count
 from collections import Counter
